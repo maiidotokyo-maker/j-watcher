@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
-JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()  # Secrets名と一致させた！
+JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()
 
 def setup_driver():
     options = Options()
@@ -27,40 +27,47 @@ def setup_driver():
 def login(driver, wait):
     driver.get(LOGIN_URL)
     main_handle = driver.current_window_handle
+    print("🔑 ログインボタンを探しています...")
 
-    # 別窓で開くログイン画面へ誘導
-    driver.execute_script("""
-        document.querySelectorAll('a').forEach(a => {
-            if (a.textContent.includes('こちら')) a.click();
-        });
-    """)
+    try:
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        clicked = driver.execute_script("""
+            let links = Array.from(document.querySelectorAll('a'));
+            let target = links.find(a => a.textContent.includes('こちら'));
+            if (target) { target.click(); return true; }
+            else { window.open('https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin', '_blank'); return false; }
+        """)
+        print("🔘 『こちら』リンククリック成功:", clicked)
+    except Exception as e:
+        print(f"ウィンドウ展開失敗、直接遷移を試みます: {e}")
+        driver.execute_script("window.open('https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin', '_blank');")
+
+    time.sleep(5)
+
+    if len(driver.window_handles) < 2:
+        print("⚠️ 別窓が開かないため、直接ログイン画面へ移動します")
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
+    else:
+        login_handle = [h for h in driver.window_handles if h != main_handle][0]
+        driver.switch_to.window(login_handle)
+
+    print("📝 ログイン情報を入力中...")
     time.sleep(3)
 
-    login_handle = next((h for h in driver.window_handles if h != main_handle), None)
-    if not login_handle:
-        raise Exception("ログインウィンドウが開きませんでした")
-    driver.switch_to.window(login_handle)
-
-    # フォーム入力
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
 
-    # ログインボタン実行
     driver.execute_script("""
         let btn = document.querySelector('img[src*="btn_login"]');
         if (btn) btn.click();
     """)
 
-    # ログイン完了待ち（窓が閉じるのを待機）
-    for _ in range(15):
-        if len(driver.window_handles) == 1:
-            break
-        time.sleep(1)
-    
+    time.sleep(5)
     driver.switch_to.window(main_handle)
-    wait.until(EC.url_contains("mypageMenu"))
     print("✅ 現在のURL:", driver.current_url)
+    if "mypageLogin" in driver.current_url:
+        raise Exception("ログインに失敗した可能性があります（ログインページに留まっています）")
 
 def search_setagaya(driver, wait):
     print("📍 検索条件画面へ移動中...")
@@ -76,7 +83,7 @@ def search_setagaya(driver, wait):
 
     print("🎯 エリア選択（世田谷区）...")
     print("🔎 ページの先頭HTML:")
-    print(driver.page_source[:1000])  # デバッグ用にHTMLの一部を出力
+    print(driver.page_source[:1000])
 
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[value='113']")))
     driver.execute_script("""
