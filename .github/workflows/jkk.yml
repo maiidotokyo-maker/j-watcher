@@ -1,29 +1,32 @@
 name: JKK Setagaya Monitor
 
 on:
-  workflow_dispatch:
-  # schedule:
-  #   - cron: '*/15 * * * *'  # 15分おきに自動実行（必要ならコメントアウトを外してね）
+  schedule:
+    - cron: '*/15 * * * *'  # 15分おきに自動実行
+  workflow_dispatch:        # GitHub上で手動実行ボタンを表示
 
 jobs:
   check-jkk:
     runs-on: ubuntu-latest
-    environment: production  # Secretsを使う場合の保護環境（任意）
+    # environment: production  # 任意の設定（Secretsを保護する環境名）
 
     steps:
       - name: リポジトリをチェックアウト
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        uses: actions/checkout@v4 # 最新版のv4を使用
 
       - name: Pythonをセットアップ
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # 最新版のv5を使用
         with:
           python-version: '3.11'
 
       - name: 必要な依存をインストール
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: JKK監視スクリプトを実行
-        run: python monitor.py
         env:
           JKK_ID: ${{ secrets.JKK_ID }}
-          JKK_PASSWORD: ${{ secrets.JKK_PASSWORD }}
+          JKK_PASS: ${{ secrets.JKK_PASS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python monitor.py
