@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
-JKK_PASS = os.environ.get("JKK_PASS", "").strip() # ここをSecrets名と合わせています
+JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip() # ここをSecrets名と合わせています
 
 def setup_driver():
     options = Options()
