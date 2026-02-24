@@ -1,9 +1,9 @@
 name: JKK Setagaya Monitor
 
-#on:
-#  schedule:
-#    - cron: '*/15 * * * *'  # 15分おきに自動実行
-  workflow_dispatch:        # GitHub上で手動実行ボタンを表示
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '*/15 * * * *'  # 15分おきに自動実行
 
 jobs:
   check-jkk:
@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
 
       - name: Pythonをセットアップ
-        uses: actions/setup-python@8d2896179abf658742de432b3f203d2c2d86a587
+        uses: actions/setup-python@8d2896179abf658742de423bf203d2c2d86a587
         with:
           python-version: '3.11'
 
