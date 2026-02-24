@@ -1,9 +1,7 @@
 name: JKK Setagaya Monitor
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'  # 15分おきに自動実行
-  workflow_dispatch:        # GitHub上で手動実行ボタンを表示
+  workflow_dispatch:  # 手動実行のみ許可（自動実行は無効）
 
 jobs:
   check-jkk:
@@ -27,6 +25,6 @@ jobs:
       - name: JKK監視スクリプトを実行
         env:
           JKK_ID: ${{ secrets.JKK_ID }}
-          JKK_PASSWORD: ${{ secrets.JKK_PASSWORD }}  # Pythonが参照する環境変数名に合わせる
+          JKK_PASSWORD: ${{ secrets.JKK_PASSWORD }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python monitor.py
