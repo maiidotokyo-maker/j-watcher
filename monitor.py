@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
-JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip() # ここをSecrets名と合わせています
+JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()  # Secrets名と一致させた！
 
 def setup_driver():
     options = Options()
@@ -60,6 +60,7 @@ def login(driver, wait):
     
     driver.switch_to.window(main_handle)
     wait.until(EC.url_contains("mypageMenu"))
+    print("✅ 現在のURL:", driver.current_url)
 
 def search_setagaya(driver, wait):
     print("📍 検索条件画面へ移動中...")
@@ -74,6 +75,9 @@ def search_setagaya(driver, wait):
     time.sleep(5)
 
     print("🎯 エリア選択（世田谷区）...")
+    print("🔎 ページの先頭HTML:")
+    print(driver.page_source[:1000])  # デバッグ用にHTMLの一部を出力
+
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[value='113']")))
     driver.execute_script("""
         let cb = document.querySelector('input[value="113"]');
@@ -90,7 +94,6 @@ def search_setagaya(driver, wait):
         if(typeof doSearch === 'function') doSearch();
     """)
 
-    # 検索結果ページの読み込み待機
     time.sleep(7)
 
     print("📖 解析中...")
