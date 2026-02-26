@@ -28,16 +28,16 @@ def login_and_check(driver, wait):
     print("🔑 ログイン開始...")
     driver.get(LOGIN_URL)
     time.sleep(3)
-
-    # 1. ログイン入力
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
     
-    # 2. メニューから検索画面へ移動
     print("📍 メニューから検索画面へ移動中...")
     time.sleep(7)
+    main_handle = driver.current_window_handle
+    
+    # 検索窓を開くボタンをクリック
     driver.execute_script("""
         let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
             (el.innerText && el.innerText.includes('空室')) || 
@@ -48,9 +48,15 @@ def login_and_check(driver, wait):
         else if(typeof submitNext === 'function') submitNext();
     """)
     
-    time.sleep(8)
+    # 💥【修正ポイント】新しいウィンドウに切り替える
+    time.sleep(10)
+    if len(driver.window_handles) > 1:
+        for handle in driver.window_handles:
+            if handle != main_handle:
+                driver.switch_to.window(handle)
+                print("🪟 検索ウィンドウに切り替えました")
+                break
 
-    # 3. 世田谷区(113)を選択
     print("🎯 エリア選択（世田谷区）...")
     found_area = False
     all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
@@ -63,9 +69,8 @@ def login_and_check(driver, wait):
                 driver.execute_script("arguments[0].click();", checkboxes[0])
                 print("✅ 世田谷区を選択完了")
                 found_area = True
-                # 検索実行
                 driver.execute_script("""
-                    let sBtn = document.querySelector('img[src*=\"btn_search\"], a[onclick*=\"doSearch\"]');
+                    let sBtn = document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
                     if(sBtn) sBtn.click(); else if(typeof doSearch === 'function') doSearch();
                 """)
                 break
@@ -73,47 +78,41 @@ def login_and_check(driver, wait):
         finally: driver.switch_to.default_content()
 
     if not found_area:
-        print("❌ エリア選択に失敗しました")
+        print("❌ エリア選択に失敗しました。現在のタイトル:", driver.title)
         return False
 
-    # 4. 【重要】結果表示待ちと空室判定
     print("⏳ 検索結果の読み込みを待機（15秒）...")
-    time.sleep(15) 
+    time.sleep(15)
 
-    # 画像にある「詳細」ボタンや「世田谷区」のリスト行があるかを全フレームからスキャン
-    is_vacant = driver.execute_script("""
-        let found = false;
-        function scan(w) {
-            try {
-                let html = w.document.body.innerHTML;
-                let text = w.document.body.innerText;
-                // 「世田谷区」という文字があり、かつ「詳細」ボタンが存在するか
-                if (text.includes('世田谷区') && (html.includes('詳細') || html.includes('btn_detail'))) {
-                    // 「該当するデータはありません」という文言がないことを確認
-                    if (!text.includes('該当するデータはありません') && !text.includes('一致する物件はありません')) {
-                        found = true;
-                    }
-                }
-                for (let i = 0; i < w.frames.length; i++) scan(w.frames[i]);
-            } catch (e) {}
-        }
-        scan(window);
-        return found;
+    print("📖 結果を解析中...")
+    content = driver.execute_script("""
+        let t=''; 
+        function c(w){
+            try{t += w.document.body.innerText + '\\n'}catch(e){}
+            for(let i=0; i<w.frames.length; i++) c(w.frames[i]);
+        } 
+        c(window); return t;
     """)
-    
-    return is_vacant
+
+    # 画像に映っている「世田谷区」「詳細」という文字があるかチェック
+    return (
+        "世田谷区" in content and
+        "詳細" in content and
+        "該当するデータはありません" not in content and
+        "条件に一致する物件はありません" not in content
+    )
 
 def main():
     driver = setup_driver()
     wait = WebDriverWait(driver, 25)
     try:
         if login_and_check(driver, wait):
-            print("🚨 空室を発見しました！通知を飛ばします。")
+            print("🚨 空室を発見しました！")
             requests.post(DISCORD_WEBHOOK_URL, json={
-                "content": "🏠 **【JKK世田谷区】空室あり！**\n画像で確認された物件が掲載されています。至急確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+                "content": "🏠 **【JKK世田谷区】空室あり！**\n画像で確認された物件（用賀馬事公苑など）が出ているはずです！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
             })
         else:
-            print("👀 空室は見つかりませんでした（判定ロジックが画像を検知できませんでした）。")
+            print("👀 空室は見つかりませんでした。")
     except Exception as e:
         print(f"❌ エラー発生: {e}")
     finally:
