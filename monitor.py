@@ -29,14 +29,15 @@ def login_and_check(driver, wait):
     print("🔑 ログイン開始...")
     driver.get(LOGIN_URL)
     time.sleep(3)
+    main_handle = driver.current_window_handle
 
-    # 1. ログイン入力 (Tabキーを利用)
+    # 1. ログイン入力
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
     
-    # 2. 待機画面（mypageMenu）でのボタンクリック
+    # 2. 待機画面でのボタンクリック
     print("📍 メニューから検索画面へ移動中...")
     time.sleep(7)
     driver.execute_script("""
@@ -49,9 +50,9 @@ def login_and_check(driver, wait):
         else if(typeof submitNext === 'function') submitNext();
     """)
     
-    time.sleep(8) # 画面遷移待ち
+    time.sleep(8)
 
-    # 3. 世田谷区(113)を全フレームから探索
+    # 3. 世田谷区選択
     print("🎯 エリア選択（世田谷区）...")
     found = False
     all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
@@ -64,46 +65,46 @@ def login_and_check(driver, wait):
                 driver.execute_script("arguments[0].click();", checkboxes[0])
                 print("✅ 世田谷区を選択完了")
                 found = True
-                # 検索実行
                 driver.execute_script("""
-                    let sBtn = document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
+                    let sBtn = document.querySelector('img[src*=\"btn_search\"], a[onclick*=\"doSearch\"]');
                     if(sBtn) sBtn.click(); else if(typeof doSearch === 'function') doSearch();
                 """)
                 break
         except: pass
         finally: driver.switch_to.default_content()
 
-    if not found:
-        return False
+    if not found: return False
 
-    # 4. 検索結果の待機と判定
-    print("⏳ 検索結果を待機中（20秒間スキャン準備）...")
-    time.sleep(20) # フレーム内の描画を確実に待つ
+    # 4. ウィンドウ切り替えの動的待機
+    print("⏳ 新しいウィンドウの待機中...")
+    try:
+        # 新しいウィンドウが開くまで最大20秒待機
+        wait.until(lambda d: len(d.window_handles) > 1)
+        for handle in driver.window_handles:
+            if handle != main_handle:
+                driver.switch_to.window(handle)
+                print(f"🪟 ウィンドウ切り替え完了: {driver.title}")
+                # ページの読み込み完了を確認
+                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+                break
+    except:
+        print("ℹ️ 新しいウィンドウは検知されませんでした。現在のウィンドウで続行します。")
 
-    # 判定ロジック：全フレームを再帰的にスキャンし、画像属性や周辺テキストに「DK」があるか確認
+    # 5. 判定（キーワードリストによるスキャン）
+    print("🔎 空室判定スキャン中...")
     found_vacant = driver.execute_script("""
         function scan(w) {
             try {
-                // フレーム内の全画像タグを確認
+                const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K'];
                 let images = w.document.getElementsByTagName('img');
                 for (let img of images) {
-                    let altText = (img.alt || "").toUpperCase();
-                    let srcPath = (img.src || "").toUpperCase();
-                    // 画像の親要素のテキストも一応確認（1DKなどの表記対策）
-                    let parentText = (img.parentElement ? img.parentElement.innerText : "").toUpperCase();
-                    
-                    if (altText.includes('DK') || srcPath.includes('DK') || parentText.includes('DK')) {
-                        return true;
-                    }
+                    let text = ((img.alt || "") + (img.src || "") + (img.parentElement ? img.parentElement.innerText : "")).toUpperCase();
+                    if (keywords.some(k => text.includes(k))) return true;
                 }
-                
-                // 子フレームを再帰探索
                 for (let i = 0; i < w.frames.length; i++) {
                     if (scan(w.frames[i])) return true;
                 }
-            } catch (e) {
-                return false; 
-            }
+            } catch (e) { return false; }
             return false;
         }
         return scan(window);
@@ -113,7 +114,8 @@ def login_and_check(driver, wait):
 
 def main():
     driver = setup_driver()
-    wait = WebDriverWait(driver, 25)
+    # WebDriverWait の秒数を少し長めに設定
+    wait = WebDriverWait(driver, 30)
     try:
         if login_and_check(driver, wait):
             print("🚨 空室を発見しました！")
