@@ -11,7 +11,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 # 設定
 LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
-SEARCH_PAGE = "https://jhomes.to-kousya.or.jp/search/jkknet/service/vacantConditionInit"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
 JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()
@@ -26,35 +25,45 @@ def setup_driver():
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def login_and_check(driver, wait):
-    # 1. ログイン画面へ直接アクセス
     print("🔑 ログイン開始...")
     driver.get(LOGIN_URL)
     time.sleep(3)
 
-    # 2. ログイン情報の入力
+    # 1. ログイン入力
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
-    time.sleep(7)
-
-    # 3. 待機画面を無視して「検索ページ」へ強制遷移（セッション維持）
-    print("🚀 検索ページへ直接移動...")
-    driver.get(SEARCH_PAGE)
-    time.sleep(5)
-
-    # 4. フレームの中から「世田谷区」を執念で探す
-    print("🎯 世田谷区のチェックボックスを探します...")
-    found = False
-    frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
     
-    for f in frames:
+    # 2. 待機画面（mypageMenu）でのボタンクリック
+    # ここが重要：ジャンプせずにボタンを「押す」
+    print("📍 メニューから検索画面へ移動中...")
+    time.sleep(7)
+    driver.execute_script("""
+        let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
+            (el.innerText && el.innerText.includes('空室')) || 
+            (el.src && el.src.includes('btn_search_cond')) ||
+            (el.onclick && el.onclick.toString().includes('submitNext'))
+        );
+        if(btn) btn.click();
+        else if(typeof submitNext === 'function') submitNext();
+    """)
+    
+    time.sleep(8) # 画面遷移待ち
+
+    # 3. 世田谷区(113)を全フレームから探索
+    print("🎯 エリア選択（世田谷区）...")
+    found = False
+    # メイン + 全フレームを回る
+    all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
+    
+    for f in all_frames:
         try:
             if f: driver.switch_to.frame(f)
             checkboxes = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
             if checkboxes:
                 driver.execute_script("arguments[0].click();", checkboxes[0])
-                print("✅ 世田谷区を選択")
+                print("✅ 世田谷区を選択完了")
                 found = True
                 # 検索実行
                 driver.execute_script("""
@@ -66,13 +75,12 @@ def login_and_check(driver, wait):
         finally: driver.switch_to.default_content()
 
     if not found:
-        print("❌ 世田谷区が見つかりません。ログインが外れたか、画面構成が違います。")
         return False
 
-    print("⏳ 結果を待機中...")
+    print("⏳ 検索結果を待機中...")
     time.sleep(10)
 
-    # 5. 空室判定（「世田谷区」と「案内可能」の文字があるかだけを見る）
+    # 4. 判定（全フレームからテキストを集約）
     content = driver.execute_script("""
         let t=''; 
         function c(w){
@@ -82,20 +90,19 @@ def login_and_check(driver, wait):
         c(window); return t;
     """)
     
-    # 詳細はいらないので、キーワードの有無だけで判定
-    if "世田谷区" in content and "案内可能" in content:
-        if "該当するデータはありません" not in content and "条件に一致する物件はありません" not in content:
-            return True # 空室あり！
-    
-    return False # 空室なし
+    return ("世田谷区" in content and "案内可能" in content and 
+            "該当するデータはありません" not in content and 
+            "条件に一致する物件はありません" not in content)
 
 def main():
     driver = setup_driver()
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 25)
     try:
         if login_and_check(driver, wait):
-            print("🚨 空室発見！通知します。")
-            requests.post(DISCORD_WEBHOOK_URL, json={"content": "🏠 **JKK世田谷区：空室あり！** 今すぐ確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/service/vacantConditionInit"})
+            print("🚨 空室を発見しました！")
+            requests.post(DISCORD_WEBHOOK_URL, json={
+                "content": "🏠 **JKK世田谷区：空室あり！**\nすぐ確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+            })
         else:
             print("👀 空室はありませんでした。")
     except Exception as e:
