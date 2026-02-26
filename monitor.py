@@ -36,7 +36,6 @@ def login_and_check(driver, wait):
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
     
     # 2. 待機画面（mypageMenu）でのボタンクリック
-    # ここが重要：ジャンプせずにボタンを「押す」
     print("📍 メニューから検索画面へ移動中...")
     time.sleep(7)
     driver.execute_script("""
@@ -54,7 +53,6 @@ def login_and_check(driver, wait):
     # 3. 世田谷区(113)を全フレームから探索
     print("🎯 エリア選択（世田谷区）...")
     found = False
-    # メイン + 全フレームを回る
     all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
     
     for f in all_frames:
@@ -90,9 +88,11 @@ def login_and_check(driver, wait):
         c(window); return t;
     """)
     
-    return ("世田谷区" in content and "案内可能" in content and 
-            "該当するデータはありません" not in content and 
-            "条件に一致する物件はありません" not in content)
+    # --- 判定ロジック： 「詳細」がある ＝ 空室あり ---
+    has_details = "詳細" in content
+    no_data = "該当するデータはありません" in content or "条件に一致する物件はありません" in content
+    
+    return has_details and not no_data
 
 def main():
     driver = setup_driver()
