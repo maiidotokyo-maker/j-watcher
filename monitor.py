@@ -26,18 +26,17 @@ def setup_driver():
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def login_and_check(driver, wait):
+    # --- ここまでは今まで通り（ログイン成功率100%） ---
     print("🔑 ログイン開始...")
     driver.get(LOGIN_URL)
     time.sleep(3)
     main_handle = driver.current_window_handle
 
-    # 1. ログイン入力
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
     
-    # 2. 待機画面でのボタンクリック
     print("📍 メニューから検索画面へ移動中...")
     time.sleep(7)
     driver.execute_script("""
@@ -52,7 +51,6 @@ def login_and_check(driver, wait):
     
     time.sleep(8)
 
-    # 3. 世田谷区選択
     print("🎯 エリア選択（世田谷区）...")
     found = False
     all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
@@ -75,23 +73,23 @@ def login_and_check(driver, wait):
 
     if not found: return False
 
-    # 4. ウィンドウ切り替えの動的待機
+    # --- ここから提案いただいた「動的待機」と「強化スキャン」 ---
     print("⏳ 新しいウィンドウの待機中...")
     try:
-        # 新しいウィンドウが開くまで最大20秒待機
+        # ウィンドウが開くまで最大20秒待機
         wait.until(lambda d: len(d.window_handles) > 1)
         for handle in driver.window_handles:
             if handle != main_handle:
                 driver.switch_to.window(handle)
                 print(f"🪟 ウィンドウ切り替え完了: {driver.title}")
-                # ページの読み込み完了を確認
+                # 読み込み完了まで待機
                 wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
                 break
     except:
         print("ℹ️ 新しいウィンドウは検知されませんでした。現在のウィンドウで続行します。")
 
-    # 5. 判定（キーワードリストによるスキャン）
     print("🔎 空室判定スキャン中...")
+    # キーワードリストを使った徹底スキャン
     found_vacant = driver.execute_script("""
         function scan(w) {
             try {
@@ -114,7 +112,6 @@ def login_and_check(driver, wait):
 
 def main():
     driver = setup_driver()
-    # WebDriverWait の秒数を少し長めに設定
     wait = WebDriverWait(driver, 30)
     try:
         if login_and_check(driver, wait):
