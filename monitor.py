@@ -37,7 +37,7 @@ def login(driver, wait):
             if (target) { target.click(); }
             else { window.open('https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin', '_blank'); }
         """)
-    except Exception as e:
+    except Exception:
         driver.execute_script("window.open('https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin', '_blank');")
 
     time.sleep(5)
@@ -53,61 +53,71 @@ def login(driver, wait):
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
-    time.sleep(5)
+    
+    time.sleep(7)
+    # ログイン窓を閉じてメインへ戻る
+    if len(driver.window_handles) > 1:
+        driver.close() 
     driver.switch_to.window(main_handle)
     
-    if "mypageLogin" in driver.current_url:
-        raise Exception("ログイン失敗（ID/PASS誤り）")
+    print("✅ ログイン完了後の状況確認")
+    print(f"🌐 URL: {driver.current_url}")
+    print(f"📄 Title: {driver.title}")
 
 def search_setagaya(driver, wait):
-    print("📍 検索画面へ移動中...")
+    print("📍 検索条件画面へ移動開始...")
     driver.execute_script("""
         let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
-            (el.innerText && el.innerText.includes('条件')) || 
+            (el.innerText && (el.innerText.includes('条件') || el.innerText.includes('空室'))) || 
             (el.src && el.src.includes('btn_search_cond')) ||
             (el.href && el.href.includes('vacantCondition'))
         );
         if(btn) btn.click();
     """)
-    time.sleep(7)
-
-    print("🎯 エリア選択（世田谷区）...")
-    found = False
-    # メイン＋全フレームを探索
-    frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
     
-    for f in frames:
-        try:
-            if f is not None:
-                driver.switch_to.frame(f)
-            
-            checkboxes = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
-            if checkboxes:
-                cb = checkboxes[0]
-                driver.execute_script("arguments[0].scrollIntoView(true);", cb)
-                driver.execute_script("arguments[0].click();", cb)
-                print("✅ フレーム内で世田谷区を選択しました")
-                found = True
-                # チェックを入れた後、同じフレーム内で「検索実行」を試みる
-                print("🔍 検索実行...")
-                driver.execute_script("""
-                    let sBtn = document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
-                    if(sBtn) { sBtn.click(); }
-                    else if(typeof doSearch === 'function') { doSearch(); }
-                """)
-                break
-        except:
-            pass
-        finally:
-            driver.switch_to.default_content()
-
-    if not found:
-        raise Exception("世田谷区の選択肢が見つかりませんでした")
-
-    print("⏳ 検索結果を待機中（10秒）...")
     time.sleep(10)
+    print("🎯 世田谷区のチェックボックスを全フレームから再帰的に探します...")
 
-    print("📖 解析中...")
+    def find_checkbox_recursive():
+        checkboxes = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
+        if checkboxes:
+            cb = checkboxes[0]
+            driver.execute_script("arguments[0].scrollIntoView(true);", cb)
+            driver.execute_script("arguments[0].click();", cb)
+            print("✅ 世田谷区を発見・選択しました！")
+            
+            print("🔍 検索ボタンをクリック...")
+            driver.execute_script("""
+                let sBtn = document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
+                if(sBtn) { sBtn.click(); }
+                else if(typeof doSearch === 'function') { doSearch(); }
+            """)
+            return True
+
+        frames = driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
+        for i in range(len(frames)):
+            try:
+                driver.switch_to.frame(i)
+                if find_checkbox_recursive():
+                    return True
+            except:
+                pass
+            finally:
+                driver.switch_to.parent_frame()
+        return False
+
+    driver.switch_to.default_content()
+    if not find_checkbox_recursive():
+        print("❌ 探索失敗: 世田谷区が見つかりませんでした")
+        print("🌐 現在のURL:", driver.current_url)
+        print("📄 現在のタイトル:", driver.title)
+        print("🧾 ページ冒頭HTML:")
+        print(driver.page_source[:1000])
+        raise Exception("世田谷区(113)が見つかりません")
+
+    print("⏳ 検索結果を待機中（12秒）...")
+    time.sleep(12)
+
     content = driver.execute_script("""
         let t=''; 
         function c(w){
@@ -116,7 +126,7 @@ def search_setagaya(driver, wait):
         } 
         c(window); return t;
     """)
-
+    
     results = []
     if "世田谷区" in content:
         if not any(kw in content for kw in ["該当するデータはありません", "条件に一致する物件はありません"]):
@@ -141,7 +151,7 @@ def main():
         else:
             print("👀 現在、空室はありません。")
     except Exception as e:
-        print(f"❌ エラー: {e}")
+        print(f"❌ エラー詳細: {e}")
     finally:
         driver.quit()
 
