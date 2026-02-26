@@ -76,23 +76,30 @@ def login_and_check(driver, wait):
         return False
 
     print("⏳ 検索結果を待機中...")
-    time.sleep(10)
+    time.sleep(15)
 
-    # 4. 判定（全フレームからテキストを集約）
-    content = driver.execute_script("""
-        let t=''; 
-        function c(w){
-            try{t += w.document.body.innerText + '\\n'}catch(e){}
-            for(let i=0; i<w.frames.length; i++) c(w.frames[i]);
-        } 
-        c(window); return t;
+    # 4. 判定：全フレームをスキャンし、imgタグのalt属性等に「DK」が含まれるか確認
+    found_vacant = driver.execute_script("""
+        function scan(w) {
+            try {
+                let images = w.document.getElementsByTagName('img');
+                for (let img of images) {
+                    if ((img.alt && img.alt.includes('DK')) || (img.src && img.src.includes('DK'))) {
+                        return true;
+                    }
+                }
+                for (let i = 0; i < w.frames.length; i++) {
+                    if (scan(w.frames[i])) return true;
+                }
+            } catch (e) {
+                return false; 
+            }
+            return false;
+        }
+        return scan(window);
     """)
     
-    # --- 判定ロジック： 「詳細」がある ＝ 空室あり ---
-    has_details = "詳細" in content
-    no_data = "該当するデータはありません" in content or "条件に一致する物件はありません" in content
-    
-    return has_details and not no_data
+    return found_vacant
 
 def main():
     driver = setup_driver()
