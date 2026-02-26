@@ -21,6 +21,7 @@ def setup_driver():
     options.add_argument('--window-size=1280,1024')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
@@ -29,7 +30,7 @@ def login_and_check(driver, wait):
     driver.get(LOGIN_URL)
     time.sleep(3)
 
-    # 1. ログイン入力
+    # 1. ログイン入力 (Tabキーを利用)
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
@@ -75,19 +76,28 @@ def login_and_check(driver, wait):
     if not found:
         return False
 
-    print("⏳ 検索結果を待機中...")
-    time.sleep(15)
+    # 4. 検索結果の待機と判定
+    print("⏳ 検索結果を待機中（20秒間スキャン準備）...")
+    time.sleep(20) # フレーム内の描画を確実に待つ
 
-    # 4. 判定：全フレームをスキャンし、imgタグのalt属性等に「DK」が含まれるか確認
+    # 判定ロジック：全フレームを再帰的にスキャンし、画像属性や周辺テキストに「DK」があるか確認
     found_vacant = driver.execute_script("""
         function scan(w) {
             try {
+                // フレーム内の全画像タグを確認
                 let images = w.document.getElementsByTagName('img');
                 for (let img of images) {
-                    if ((img.alt && img.alt.includes('DK')) || (img.src && img.src.includes('DK'))) {
+                    let altText = (img.alt || "").toUpperCase();
+                    let srcPath = (img.src || "").toUpperCase();
+                    // 画像の親要素のテキストも一応確認（1DKなどの表記対策）
+                    let parentText = (img.parentElement ? img.parentElement.innerText : "").toUpperCase();
+                    
+                    if (altText.includes('DK') || srcPath.includes('DK') || parentText.includes('DK')) {
                         return true;
                     }
                 }
+                
+                // 子フレームを再帰探索
                 for (let i = 0; i < w.frames.length; i++) {
                     if (scan(w.frames[i])) return true;
                 }
