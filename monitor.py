@@ -27,41 +27,32 @@ def main():
     wait = WebDriverWait(driver, 30)
     
     try:
-        # 1. ログインページへアクセス
-        print("🔑 ログインページを読み込み中...")
+        # 1. ログインページへ直接アクセス
+        print("🔑 ログイン中...")
         driver.get(LOGIN_URL)
-        time.sleep(2)
-        print("📄 現在のURL:", driver.current_url)
-        print("📄 現在のタイトル:", driver.title)
-
-        if "おわび" in driver.title:
-            print("🚫 おわびページに遷移しました。ログインできません。")
-            return
-
-        # 2. ログイン情報の入力
+        
+        # 2. ログイン情報の入力 (以前成功していた selector)
         user_input = wait.until(EC.presence_of_element_located((By.NAME, "userid")))
-        pass_input = driver.find_element(By.NAME, "passwd")
+        pass_input = driver.find_element(By.NAME, "passwd") # 前に成功した時は passwd でした
         
         user_input.send_keys(JKK_ID)
         pass_input.send_keys(JKK_PASS)
-        print("📝 ログイン実行...")
+        print("📝 ログイン情報を送信...")
         driver.execute_script("document.querySelector('img[src*=\"btn_login\"]').click();")
         
         # 3. メニュー画面の処理
         time.sleep(10)
-        print("📍 メニュー画面。検索画面へ移動します...")
+        print("📍 メニュー画面。検索画面へ移動中...")
         
+        # ここで「おわび」画面（新窓エラー）を防ぐための処理だけ追加
         driver.execute_script("""
             let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
                 (el.innerText && el.innerText.includes('空室')) || 
-                (el.src && el.src.includes('btn_search_cond')) ||
-                (el.onclick && el.onclick.toString().includes('submitNext'))
+                (el.src && el.src.includes('btn_search_cond'))
             );
             if(btn) {
-                if(btn.tagName === 'A') btn.target = "_self";
+                if(btn.tagName === 'A') btn.target = "_self"; // 新窓を開かせない
                 btn.click();
-            } else if(typeof submitNext === 'function') {
-                submitNext();
             }
         """)
         
@@ -104,11 +95,12 @@ def main():
             return t;
         """)
 
-        if "世田谷区" in full_text and ("詳細" in full_text or "案内可能" in full_text):
-            if "該当するデータはありません" not in full_text and "一致する物件はありません" not in full_text:
+        # 判定：画像で見えていた「世田谷区」と「詳細」ボタンがあるか
+        if "世田谷区" in full_text and "詳細" in full_text:
+            if "該当するデータはありません" not in full_text:
                 print("🚨 空室を確認！通知します。")
                 requests.post(DISCORD_WEBHOOK_URL, json={
-                    "content": "🏠 **【JKK世田谷区】空室あり！**\\n画像で確認された物件が出ています。至急確認してください！\\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+                    "content": "🏠 **【JKK世田谷区】空室あり！**\n画像で確認された物件が出ています。至急確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
                 })
                 return
 
@@ -119,8 +111,7 @@ def main():
         try:
             print(f"📄 最終URL: {driver.current_url}")
             print(f"📄 最終タイトル: {driver.title}")
-        except Exception as inner_e:
-            print(f"⚠️ URL/タイトル取得中にエラー: {inner_e}")
+        except: pass
     finally:
         driver.quit()
 
