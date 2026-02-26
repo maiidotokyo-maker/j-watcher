@@ -8,7 +8,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # --- 設定 ---
-LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+# 玄関口となるトップページ
+TOP_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/index.html"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
 JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()
@@ -27,52 +28,47 @@ def main():
     wait = WebDriverWait(driver, 30)
     
     try:
-        # 1. ログインページへアクセス
-        print("🔑 ログインページを読み込み中...")
-        driver.get(LOGIN_URL)
-        time.sleep(2)
-        print("📄 現在のURL:", driver.current_url)
-        print("📄 現在のタイトル:", driver.title)
-
-        # 2. ログイン情報の入力（要素が現れるまで待機）
-        try:
-            user_input = wait.until(EC.presence_of_element_located((By.NAME, "userid")))
-            pass_input = driver.find_element(By.NAME, "passwd")
-        except Exception as e:
-            print("❌ ログインフォームの要素が見つかりません。")
-            print("📄 現在のURL:", driver.current_url)
-            print("📄 現在のタイトル:", driver.title)
-            raise e
-
+        # 1. 玄関（トップページ）から入る
+        print("🌐 トップページにアクセスして「おわび」を回避中...")
+        driver.get(TOP_URL)
+        time.sleep(3)
+        
+        # 2. ログインボタンを探してクリック（これで正規セッションが開始される）
+        print("🔑 ログインボタンをクリック...")
+        login_nav = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "img[src*='btn_login'], a[href*='mypageLogin']")))
+        driver.execute_script("arguments[0].click();", login_nav)
+        
+        # 3. ログインフォームの入力
+        print("⏳ フォーム待機中...")
+        user_input = wait.until(EC.presence_of_element_located((By.NAME, "userid")))
+        # inputのtype="password"を指定することでpasswd/password表記ブレを回避
+        pass_input = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
+        
         user_input.send_keys(JKK_ID)
         pass_input.send_keys(JKK_PASS)
-        print("📝 ログイン実行...")
+        print("📝 ログイン情報を送信...")
         driver.execute_script("document.querySelector('img[src*=\"btn_login\"]').click();")
         
-        # 3. メニュー画面の処理
+        # 4. メニュー画面（同じタブで遷移）
         time.sleep(10)
-        print("📍 メニュー画面。検索画面へ移動します...")
-        
+        print("📍 メニュー画面。条件入力へ...")
         driver.execute_script("""
             let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
                 (el.innerText && el.innerText.includes('空室')) || 
-                (el.src && el.src.includes('btn_search_cond')) ||
-                (el.onclick && el.onclick.toString().includes('submitNext'))
+                (el.src && el.src.includes('btn_search_cond'))
             );
             if(btn) {
                 if(btn.tagName === 'A') btn.target = "_self";
                 btn.click();
-            } else if(typeof submitNext === 'function') {
-                submitNext();
             }
         """)
         
-        # 4. 検索条件画面で世田谷区(113)を選択
+        # 5. 世田谷区(113)を選択
         time.sleep(10)
         print("🎯 世田谷区を選択中...")
         found_checkbox = False
-        
         all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
+        
         for f in all_frames:
             try:
                 if f: driver.switch_to.frame(f)
@@ -92,7 +88,7 @@ def main():
             print(f"❌ エリア選択に失敗。現在のタイトル: {driver.title}")
             return
 
-        # 5. 検索結果の待機と空室判定
+        # 6. 結果判定
         print("⏳ 検索結果を読み込み中（15秒）...")
         time.sleep(15)
         
@@ -106,11 +102,12 @@ def main():
             return t;
         """)
 
+        # 画像の「詳細」または「案内可能」ボタンを検知
         if "世田谷区" in full_text and ("詳細" in full_text or "案内可能" in full_text):
-            if "該当するデータはありません" not in full_text and "一致する物件はありません" not in full_text:
+            if "該当するデータはありません" not in full_text:
                 print("🚨 空室を確認！通知します。")
                 requests.post(DISCORD_WEBHOOK_URL, json={
-                    "content": "🏠 **【JKK世田谷区】空室あり！**\n画像で確認された物件が出ています。至急確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+                    "content": "🏠 **【JKK世田谷区】空室あり！**\\n画像で確認された物件が出ています。至急確認してください！\\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/index.html"
                 })
                 return
 
@@ -118,6 +115,11 @@ def main():
 
     except Exception as e:
         print(f"❌ エラー詳細: {e}")
+        # デバッグ用にその時のURLとタイトルを表示
+        try:
+            print(f"📄 最終URL: {driver.current_url}")
+            print(f"📄 最終タイトル: {driver.title}")
+        except: pass
     finally:
         driver.quit()
 
