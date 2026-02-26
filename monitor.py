@@ -30,12 +30,20 @@ def main():
         # 1. ログインページへアクセス
         print("🔑 ログインページを読み込み中...")
         driver.get(LOGIN_URL)
-        
-        # 2. ログイン情報の入力
-        # userid と passwd (ご指摘ありがとうございます！) を待機
-        user_input = wait.until(EC.presence_of_element_located((By.NAME, "userid")))
-        pass_input = driver.find_element(By.NAME, "passwd") # ここを修正
-        
+        time.sleep(2)
+        print("📄 現在のURL:", driver.current_url)
+        print("📄 現在のタイトル:", driver.title)
+
+        # 2. ログイン情報の入力（要素が現れるまで待機）
+        try:
+            user_input = wait.until(EC.presence_of_element_located((By.NAME, "userid")))
+            pass_input = driver.find_element(By.NAME, "passwd")
+        except Exception as e:
+            print("❌ ログインフォームの要素が見つかりません。")
+            print("📄 現在のURL:", driver.current_url)
+            print("📄 現在のタイトル:", driver.title)
+            raise e
+
         user_input.send_keys(JKK_ID)
         pass_input.send_keys(JKK_PASS)
         print("📝 ログイン実行...")
@@ -45,7 +53,6 @@ def main():
         time.sleep(10)
         print("📍 メニュー画面。検索画面へ移動します...")
         
-        # 新窓を開かずに今のタブで遷移する
         driver.execute_script("""
             let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
                 (el.innerText && el.innerText.includes('空室')) || 
@@ -72,7 +79,6 @@ def main():
                 cb = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
                 if cb:
                     driver.execute_script("arguments[0].click();", cb[0])
-                    # 同じフレーム内の検索ボタン
                     search_btn = driver.find_elements(By.CSS_SELECTOR, "img[src*='btn_search']")
                     if search_btn:
                         driver.execute_script("arguments[0].click();", search_btn[0])
@@ -100,7 +106,6 @@ def main():
             return t;
         """)
 
-        # 「世田谷区」と「詳細」があれば通知
         if "世田谷区" in full_text and ("詳細" in full_text or "案内可能" in full_text):
             if "該当するデータはありません" not in full_text and "一致する物件はありません" not in full_text:
                 print("🚨 空室を確認！通知します。")
