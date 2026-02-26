@@ -10,7 +10,8 @@ from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 
 # 設定
-LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu"
+LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+SEARCH_PAGE = "https://jhomes.to-kousya.or.jp/search/jkknet/service/vacantConditionInit"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
 JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()
@@ -24,100 +25,54 @@ def setup_driver():
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-def login(driver, wait):
+def login_and_check(driver, wait):
+    # 1. ログイン画面へ直接アクセス
     print("🔑 ログイン開始...")
     driver.get(LOGIN_URL)
-    main_handle = driver.current_window_handle
-
-    try:
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        driver.execute_script("""
-            let links = Array.from(document.querySelectorAll('a'));
-            let target = links.find(a => a.textContent.includes('こちら'));
-            if (target) { target.click(); }
-            else { window.open('https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin', '_blank'); }
-        """)
-    except Exception:
-        driver.execute_script("window.open('https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin', '_blank');")
-
-    time.sleep(5)
-    if len(driver.window_handles) < 2:
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
-    else:
-        login_handle = [h for h in driver.window_handles if h != main_handle][0]
-        driver.switch_to.window(login_handle)
-
-    print("📝 ログイン情報を入力中...")
     time.sleep(3)
+
+    # 2. ログイン情報の入力
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
-    
     time.sleep(7)
-    # ログイン窓を閉じてメインへ戻る
-    if len(driver.window_handles) > 1:
-        driver.close() 
-    driver.switch_to.window(main_handle)
+
+    # 3. 待機画面を無視して「検索ページ」へ強制遷移（セッション維持）
+    print("🚀 検索ページへ直接移動...")
+    driver.get(SEARCH_PAGE)
+    time.sleep(5)
+
+    # 4. フレームの中から「世田谷区」を執念で探す
+    print("🎯 世田谷区のチェックボックスを探します...")
+    found = False
+    frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
     
-    print("✅ ログイン完了後の状況確認")
-    print(f"🌐 URL: {driver.current_url}")
-    print(f"📄 Title: {driver.title}")
+    for f in frames:
+        try:
+            if f: driver.switch_to.frame(f)
+            checkboxes = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
+            if checkboxes:
+                driver.execute_script("arguments[0].click();", checkboxes[0])
+                print("✅ 世田谷区を選択")
+                found = True
+                # 検索実行
+                driver.execute_script("""
+                    let sBtn = document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
+                    if(sBtn) sBtn.click(); else if(typeof doSearch === 'function') doSearch();
+                """)
+                break
+        except: pass
+        finally: driver.switch_to.default_content()
 
-def search_setagaya(driver, wait):
-    print("📍 検索条件画面へ移動開始...")
-    driver.execute_script("""
-        let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
-            (el.innerText && (el.innerText.includes('条件') || el.innerText.includes('空室'))) || 
-            (el.src && el.src.includes('btn_search_cond')) ||
-            (el.href && el.href.includes('vacantCondition'))
-        );
-        if(btn) btn.click();
-    """)
-    
-    time.sleep(10)
-    print("🎯 世田谷区のチェックボックスを全フレームから再帰的に探します...")
-
-    def find_checkbox_recursive():
-        checkboxes = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
-        if checkboxes:
-            cb = checkboxes[0]
-            driver.execute_script("arguments[0].scrollIntoView(true);", cb)
-            driver.execute_script("arguments[0].click();", cb)
-            print("✅ 世田谷区を発見・選択しました！")
-            
-            print("🔍 検索ボタンをクリック...")
-            driver.execute_script("""
-                let sBtn = document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
-                if(sBtn) { sBtn.click(); }
-                else if(typeof doSearch === 'function') { doSearch(); }
-            """)
-            return True
-
-        frames = driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
-        for i in range(len(frames)):
-            try:
-                driver.switch_to.frame(i)
-                if find_checkbox_recursive():
-                    return True
-            except:
-                pass
-            finally:
-                driver.switch_to.parent_frame()
+    if not found:
+        print("❌ 世田谷区が見つかりません。ログインが外れたか、画面構成が違います。")
         return False
 
-    driver.switch_to.default_content()
-    if not find_checkbox_recursive():
-        print("❌ 探索失敗: 世田谷区が見つかりませんでした")
-        print("🌐 現在のURL:", driver.current_url)
-        print("📄 現在のタイトル:", driver.title)
-        print("🧾 ページ冒頭HTML:")
-        print(driver.page_source[:1000])
-        raise Exception("世田谷区(113)が見つかりません")
+    print("⏳ 結果を待機中...")
+    time.sleep(10)
 
-    print("⏳ 検索結果を待機中（12秒）...")
-    time.sleep(12)
-
+    # 5. 空室判定（「世田谷区」と「案内可能」の文字があるかだけを見る）
     content = driver.execute_script("""
         let t=''; 
         function c(w){
@@ -127,31 +82,24 @@ def search_setagaya(driver, wait):
         c(window); return t;
     """)
     
-    results = []
-    if "世田谷区" in content:
-        if not any(kw in content for kw in ["該当するデータはありません", "条件に一致する物件はありません"]):
-            lines = [l.strip() for l in content.split('\n') if "世田谷区" in l and "案内可能" in l]
-            results = list(set(lines))
-    return results
-
-def notify_discord(message):
-    if not DISCORD_WEBHOOK_URL: return
-    requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+    # 詳細はいらないので、キーワードの有無だけで判定
+    if "世田谷区" in content and "案内可能" in content:
+        if "該当するデータはありません" not in content and "条件に一致する物件はありません" not in content:
+            return True # 空室あり！
+    
+    return False # 空室なし
 
 def main():
     driver = setup_driver()
-    wait = WebDriverWait(driver, 25)
+    wait = WebDriverWait(driver, 20)
     try:
-        login(driver, wait)
-        current = search_setagaya(driver, wait)
-        if current:
-            msg = "🏠 **世田谷区に空室アリ！**\n" + "\n".join([f"- {i}" for i in current])
-            notify_discord(msg)
-            print(f"✅ 通知送信: {len(current)}件")
+        if login_and_check(driver, wait):
+            print("🚨 空室発見！通知します。")
+            requests.post(DISCORD_WEBHOOK_URL, json={"content": "🏠 **JKK世田谷区：空室あり！** 今すぐ確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/service/vacantConditionInit"})
         else:
-            print("👀 現在、空室はありません。")
+            print("👀 空室はありませんでした。")
     except Exception as e:
-        print(f"❌ エラー詳細: {e}")
+        print(f"❌ エラー発生: {e}")
     finally:
         driver.quit()
 
