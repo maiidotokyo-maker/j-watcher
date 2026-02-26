@@ -7,7 +7,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 設定
+# --- 設定 ---
 LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
@@ -27,11 +27,12 @@ def main():
     wait = WebDriverWait(driver, 30)
     
     try:
-        # 1. ログインページへアクセス
+        # 1. ログインページへ直接アクセス
         print("🔑 ログイン開始...")
         driver.get(LOGIN_URL)
         
-        # 2. ログイン情報の入力
+        # 2. ログイン情報の入力 (ここが成功していたポイントです)
+        # タイムアウト回避のためにしっかり待ちます
         user_input = wait.until(EC.presence_of_element_located((By.NAME, "userid")))
         pass_input = driver.find_element(By.NAME, "passwd")
         
@@ -39,7 +40,7 @@ def main():
         pass_input.send_keys(JKK_PASS)
         
         print("📝 ログイン実行...")
-        # ログインボタン（画像）をクリック
+        # ボタンを画像パスで指定してクリック
         driver.execute_script("document.querySelector('img[src*=\"btn_login\"]').click();")
         
         # 3. メニュー画面での待機
@@ -47,7 +48,7 @@ def main():
         main_handle = driver.current_window_handle
         print("📍 メニューから検索画面へ移動中...")
         
-        # 「空室状況検索」をクリック
+        # 「空室状況検索」ボタンをクリック
         driver.execute_script("""
             let btn = Array.from(document.querySelectorAll('a, img')).find(el => 
                 (el.innerText && el.innerText.includes('空室')) || 
@@ -68,7 +69,7 @@ def main():
         print("🎯 世田谷区を選択中...")
         found_checkbox = False
         
-        # フレーム内を全探索（これが世田谷区を選べた時のロジックです）
+        # フレーム内を全探索
         all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
         for f in all_frames:
             try:
@@ -76,7 +77,7 @@ def main():
                 cb = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
                 if cb:
                     driver.execute_script("arguments[0].click();", cb[0])
-                    print("✅ 世田谷区にチェックを入れました")
+                    print("✅ 世田谷区にチェック完了")
                     
                     # 検索実行ボタンをクリック
                     search_btn = driver.find_elements(By.CSS_SELECTOR, "img[src*='btn_search']")
@@ -95,7 +96,7 @@ def main():
         print("⏳ 検索結果を読み込み中...")
         time.sleep(15)
         
-        # 全テキストを取得して判定
+        # テキストを抽出して判定
         full_text = driver.execute_script("""
             let t = '';
             function scan(w) {
@@ -106,6 +107,7 @@ def main():
             return t;
         """)
 
+        # 「世田谷区」と、空室がある時だけ出る「詳細」ボタンの存在を確認
         if "世田谷区" in full_text and "詳細" in full_text:
             if "該当するデータはありません" not in full_text:
                 print("🚨 空室発見！通知します。")
