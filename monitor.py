@@ -26,7 +26,7 @@ def setup_driver():
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def login_and_check(driver, wait):
-    # --- ここまでは今まで通り（ログイン成功率100%） ---
+    # --- 1. ログイン（ここは成功しているので変更なし） ---
     print("🔑 ログイン開始...")
     driver.get(LOGIN_URL)
     time.sleep(3)
@@ -37,6 +37,7 @@ def login_and_check(driver, wait):
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
     
+    # --- 2. メニュー移動（ここも成功中） ---
     print("📍 メニューから検索画面へ移動中...")
     time.sleep(7)
     driver.execute_script("""
@@ -51,6 +52,7 @@ def login_and_check(driver, wait):
     
     time.sleep(8)
 
+    # --- 3. 世田谷区選択（ここも成功中） ---
     print("🎯 エリア選択（世田谷区）...")
     found = False
     all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
@@ -63,6 +65,7 @@ def login_and_check(driver, wait):
                 driver.execute_script("arguments[0].click();", checkboxes[0])
                 print("✅ 世田谷区を選択完了")
                 found = True
+                # 検索実行
                 driver.execute_script("""
                     let sBtn = document.querySelector('img[src*=\"btn_search\"], a[onclick*=\"doSearch\"]');
                     if(sBtn) sBtn.click(); else if(typeof doSearch === 'function') doSearch();
@@ -73,32 +76,37 @@ def login_and_check(driver, wait):
 
     if not found: return False
 
-    # --- ここから提案いただいた「動的待機」と「強化スキャン」 ---
+    # --- 4. 【新機能】別ウィンドウへの切り替えと待機 ---
     print("⏳ 新しいウィンドウの待機中...")
     try:
-        # ウィンドウが開くまで最大20秒待機
+        # 新しい窓が開くまで最大20秒待つ
         wait.until(lambda d: len(d.window_handles) > 1)
         for handle in driver.window_handles:
             if handle != main_handle:
                 driver.switch_to.window(handle)
-                print(f"🪟 ウィンドウ切り替え完了: {driver.title}")
-                # 読み込み完了まで待機
+                print(f"🪟 検索結果ウィンドウに切り替え完了: {driver.title}")
+                # ページが完全に読み込まれるまで待つ
                 wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
                 break
     except:
-        print("ℹ️ 新しいウィンドウは検知されませんでした。現在のウィンドウで続行します。")
+        print("ℹ️ 新しい窓は開きませんでした。同一窓での遷移として続行します。")
 
-    print("🔎 空室判定スキャン中...")
-    # キーワードリストを使った徹底スキャン
+    # --- 5. 【強化版】間取りキーワードスキャン ---
+    print("🔎 空室判定スキャン開始...")
+    time.sleep(5) # 念押しの描画待ち
+    
     found_vacant = driver.execute_script("""
         function scan(w) {
             try {
+                // キーワードリスト（LDK等も網羅）
                 const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K'];
                 let images = w.document.getElementsByTagName('img');
                 for (let img of images) {
+                    // 画像のalt, src, 周辺テキストを大文字で統一してチェック
                     let text = ((img.alt || "") + (img.src || "") + (img.parentElement ? img.parentElement.innerText : "")).toUpperCase();
                     if (keywords.some(k => text.includes(k))) return true;
                 }
+                // 全てのフレームを再帰的にチェック
                 for (let i = 0; i < w.frames.length; i++) {
                     if (scan(w.frames[i])) return true;
                 }
