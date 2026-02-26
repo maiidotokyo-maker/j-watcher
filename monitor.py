@@ -35,8 +35,7 @@ def login_and_check(driver, wait):
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
     
-    # 2. 待機画面（mypageMenu）でのボタンクリック
-    # ここが重要：ジャンプせずにボタンを「押す」
+    # 2. メニューから検索画面へ移動
     print("📍 メニューから検索画面へ移動中...")
     time.sleep(7)
     driver.execute_script("""
@@ -49,12 +48,11 @@ def login_and_check(driver, wait):
         else if(typeof submitNext === 'function') submitNext();
     """)
     
-    time.sleep(8) # 画面遷移待ち
+    time.sleep(8)
 
-    # 3. 世田谷区(113)を全フレームから探索
+    # 3. 世田谷区(113)を選択
     print("🎯 エリア選択（世田谷区）...")
-    found = False
-    # メイン + 全フレームを回る
+    found_area = False
     all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
     
     for f in all_frames:
@@ -64,47 +62,58 @@ def login_and_check(driver, wait):
             if checkboxes:
                 driver.execute_script("arguments[0].click();", checkboxes[0])
                 print("✅ 世田谷区を選択完了")
-                found = True
+                found_area = True
                 # 検索実行
                 driver.execute_script("""
-                    let sBtn = document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
+                    let sBtn = document.querySelector('img[src*=\"btn_search\"], a[onclick*=\"doSearch\"]');
                     if(sBtn) sBtn.click(); else if(typeof doSearch === 'function') doSearch();
                 """)
                 break
         except: pass
         finally: driver.switch_to.default_content()
 
-    if not found:
+    if not found_area:
+        print("❌ エリア選択に失敗しました")
         return False
 
-    print("⏳ 検索結果を待機中...")
-    time.sleep(10)
+    # 4. 【重要】結果表示待ちと空室判定
+    print("⏳ 検索結果の読み込みを待機（15秒）...")
+    time.sleep(15) 
 
-    # 4. 判定（全フレームからテキストを集約）
-    content = driver.execute_script("""
-        let t=''; 
-        function c(w){
-            try{t += w.document.body.innerText + '\\n'}catch(e){}
-            for(let i=0; i<w.frames.length; i++) c(w.frames[i]);
-        } 
-        c(window); return t;
+    # 画像にある「詳細」ボタンや「世田谷区」のリスト行があるかを全フレームからスキャン
+    is_vacant = driver.execute_script("""
+        let found = false;
+        function scan(w) {
+            try {
+                let html = w.document.body.innerHTML;
+                let text = w.document.body.innerText;
+                // 「世田谷区」という文字があり、かつ「詳細」ボタンが存在するか
+                if (text.includes('世田谷区') && (html.includes('詳細') || html.includes('btn_detail'))) {
+                    // 「該当するデータはありません」という文言がないことを確認
+                    if (!text.includes('該当するデータはありません') && !text.includes('一致する物件はありません')) {
+                        found = true;
+                    }
+                }
+                for (let i = 0; i < w.frames.length; i++) scan(w.frames[i]);
+            } catch (e) {}
+        }
+        scan(window);
+        return found;
     """)
     
-    return ("世田谷区" in content and "案内可能" in content and 
-            "該当するデータはありません" not in content and 
-            "条件に一致する物件はありません" not in content)
+    return is_vacant
 
 def main():
     driver = setup_driver()
     wait = WebDriverWait(driver, 25)
     try:
         if login_and_check(driver, wait):
-            print("🚨 空室を発見しました！")
+            print("🚨 空室を発見しました！通知を飛ばします。")
             requests.post(DISCORD_WEBHOOK_URL, json={
-                "content": "🏠 **JKK世田谷区：空室あり！**\nすぐ確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+                "content": "🏠 **【JKK世田谷区】空室あり！**\n画像で確認された物件が掲載されています。至急確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
             })
         else:
-            print("👀 空室はありませんでした。")
+            print("👀 空室は見つかりませんでした（判定ロジックが画像を検知できませんでした）。")
     except Exception as e:
         print(f"❌ エラー発生: {e}")
     finally:
