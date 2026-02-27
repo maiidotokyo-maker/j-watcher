@@ -31,7 +31,7 @@ def login_and_check(driver, wait):
     time.sleep(3)
     main_handle = driver.current_window_handle
 
-    # 1. ログイン入力 (ここは変更なし：成功実績あり)
+    # 1. ログイン入力 (成功実績のある手順)
     actions = ActionChains(driver)
     actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(JKK_ID).send_keys(Keys.TAB).send_keys(JKK_PASS).perform()
     time.sleep(1)
@@ -65,7 +65,7 @@ def login_and_check(driver, wait):
                 driver.execute_script("arguments[0].click();", checkboxes[0])
                 print("✅ 世田谷区を選択完了")
                 found_area = True
-                # 検索実行
+                # 検索ボタン実行
                 driver.execute_script("""
                     let sBtn = document.querySelector('img[src*=\"btn_search\"], a[onclick*=\"doSearch\"]');
                     if(sBtn) sBtn.click(); else if(typeof doSearch === 'function') doSearch();
@@ -76,7 +76,7 @@ def login_and_check(driver, wait):
 
     if not found_area: return False
 
-    # 4. 【改善策】新しいウィンドウの出現を最大20秒監視
+    # 4. ウィンドウ切り替えのループ監視（最大20秒）
     print(f"⏳ 検索結果ウィンドウの出現を監視中... (現在の窓数: {len(driver.window_handles)})")
     switched = False
     for i in range(20):
@@ -85,30 +85,34 @@ def login_and_check(driver, wait):
             new_handles = [h for h in handles if h != main_handle]
             if new_handles:
                 driver.switch_to.window(new_handles[0])
-                print(f"🪟 ウィンドウ切り替え完了: {driver.title}")
-                print(f"🔗 現在のURL: {driver.current_url}")
-                # ページの読み込み完了を確認
+                print(f"🪟 ウィンドウ切り替え完了! タイトル: {driver.title}")
                 wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
                 switched = True
                 break
         time.sleep(1)
     
     if not switched:
-        print("⚠️ 新しいウィンドウが開かないままタイムアウトしました。現在のウィンドウで続行します。")
+        print("🔍 別ウィンドウなし。現在のウィンドウで全フレームを再帰スキャンします。")
 
-    # 5. 徹底判定スキャン（DKキーワードリスト）
+    # 5. 判定スキャン（JSで全フレームを根こそぎ探索）
     print("🔎 空室判定スキャン開始...")
-    time.sleep(5) # 描画のための最終バッファ
+    time.sleep(5) # 描画のための最終待機
     
     found_vacant = driver.execute_script("""
         function scan(w) {
             try {
                 const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K'];
+                // 1. 画像属性（alt, src）と周辺テキストのチェック
                 let images = w.document.getElementsByTagName('img');
                 for (let img of images) {
                     let text = ((img.alt || "") + (img.src || "") + (img.parentElement ? img.parentElement.innerText : "")).toUpperCase();
                     if (keywords.some(k => text.includes(k))) return true;
                 }
+                // 2. フレーム内のbodyテキストそのものもチェック
+                let bodyText = w.document.body.innerText.toUpperCase();
+                if (keywords.some(k => bodyText.includes(k))) return true;
+
+                // 3. 子フレームを再帰的にチェック
                 for (let i = 0; i < w.frames.length; i++) {
                     if (scan(w.frames[i])) return true;
                 }
