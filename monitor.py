@@ -36,7 +36,14 @@ def login_and_check(driver, wait):
     time.sleep(1)
     driver.execute_script("let btn = document.querySelector('img[src*=\"btn_login\"]'); if (btn) btn.click();")
 
-    # 1.5 ログイン成功の検知
+    # 1.5 ログイン後の画面を保存
+    time.sleep(5)  # 少し待ってから保存
+    driver.save_screenshot("login_result.png")
+    with open("login_result.html", "w", encoding="utf-8") as f:
+        f.write(driver.page_source)
+    print("📸 ログイン後の画面を保存しました（login_result.png / login_result.html）")
+
+    # 1.6 ログイン成功の検知
     try:
         wait.until(lambda d: d.execute_script("return document.body.innerText.includes('空室') || document.body.innerText.includes('メニュー')"))
         print("✅ ログイン成功を確認しました。")
@@ -44,7 +51,7 @@ def login_and_check(driver, wait):
         print("❌ ログインに失敗した可能性があります。")
         return False
 
-    # 2. メニュー移動
+    # 以下は省略（前回のコードと同じ）
     print("📍 メニューから検索画面へ移動中...")
     time.sleep(5)
     driver.execute_script("""
@@ -59,7 +66,6 @@ def login_and_check(driver, wait):
     
     time.sleep(8)
 
-    # 3. エリア選択（世田谷区）
     print("🎯 エリア選択（世田谷区）...")
     found_area = False
     all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
@@ -88,7 +94,6 @@ def login_and_check(driver, wait):
         print("❌ 世田谷区の選択に失敗しました。")
         return False
 
-    # 4. 新しいウィンドウの出現を監視
     print("⏳ 検索結果ウィンドウを待機中...")
     switched = False
     for i in range(20):
@@ -106,7 +111,6 @@ def login_and_check(driver, wait):
     if not switched:
         print("🔍 別ウィンドウなし。現在のウィンドウで続行します。")
 
-    # 5. 描画完了の明示的な待機
     print("⌛ 検索結果の描画完了を追加で待機中...")
     try:
         wait.until(lambda d: d.execute_script("""
@@ -119,7 +123,6 @@ def login_and_check(driver, wait):
 
     time.sleep(3)
 
-    # 6. 全フレームをPythonで巡回しつつJSで再帰スキャン
     print("🔎 全フレームを対象に空室スキャンを開始...")
     found_vacant = False
     all_target_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
@@ -177,14 +180,4 @@ def main():
         if login_and_check(driver, wait):
             print("🚨 空室を発見しました！")
             requests.post(DISCORD_WEBHOOK_URL, json={
-                "content": "🏠 **JKK世田谷区：空室あり！**\nすぐ確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
-            })
-        else:
-            print("👀 空室はありませんでした。")
-    except Exception as e:
-        print(f"❌ エラー発生: {e}")
-    finally:
-        driver.quit()
-
-if __name__ == "__main__":
-    main()
+                "content": "🏠 **JKK世田谷区：空室あり！**\nすぐ確認してください！
