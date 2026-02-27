@@ -4,7 +4,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
@@ -85,7 +84,7 @@ def login_and_check(driver, wait):
             if new_handles:
                 driver.switch_to.window(new_handles[0])
                 print(f"🪟 ウィンドウ切り替え完了!: {driver.title}")
-                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+                WebDriverWait(driver, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
                 switched = True
                 break
         time.sleep(1)
@@ -93,10 +92,21 @@ def login_and_check(driver, wait):
     if not switched:
         print("🔍 別ウィンドウなし。現在のウィンドウで続行します。")
 
-    # 5. 【最強ロジック】全フレームをPythonで巡回しつつJSでスキャン
+    # 5. 描画完了の明示的な待機
+    print("⌛ 検索結果の描画完了を追加で待機中...")
+    try:
+        wait.until(lambda d: d.execute_script("""
+            let t = document.body.innerText;
+            return t.includes('詳細') || t.includes('物件') || t.includes('間取り') || t.includes('該当するデータはありません');
+        """))
+        print("✅ 検索結果の描画を確認しました。")
+    except:
+        print("⚠️ 描画完了の検知に失敗しましたが、スキャンを続行します。")
+
+    time.sleep(3)
+
+    # 6. 全フレームをPythonで巡回しつつJSで再帰スキャン
     print("🔎 全フレームを対象に空室スキャンを開始...")
-    time.sleep(5)
-    
     found_vacant = False
     all_target_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
     
@@ -109,11 +119,12 @@ def login_and_check(driver, wait):
             else:
                 print("🔍 メインフレームをスキャン中...")
 
-            # 各フレーム内で再帰スキャンJSを実行
             res = driver.execute_script("""
                 function scan(w) {
                     try {
-                        const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K', '１ＤＫ', '２ＤＫ', '１ＬＤＫ', '２ＬＤＫ'];
+                        const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K',
+                                          '１ＤＫ', '２ＤＫ', '１ＬＤＫ', '２ＬＤＫ',
+                                          '物件', '詳細', '間取り'];
                         let images = w.document.getElementsByTagName('img');
                         for (let img of images) {
                             let text = ((img.alt || "") + (img.src || "") + (img.parentElement ? img.parentElement.innerText : "")).toUpperCase();
