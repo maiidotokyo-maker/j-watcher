@@ -75,8 +75,8 @@ def login_and_check(driver, wait):
 
     if not found_area: return False
 
-    # 4. ウィンドウ切り替えの動的監視
-    print(f"⏳ 検索結果ウィンドウの出現を監視中...")
+    # 4. 新しいウィンドウの出現を最大20秒監視
+    print("⏳ 検索結果ウィンドウを待機中...")
     switched = False
     for i in range(20):
         handles = driver.window_handles
@@ -85,6 +85,7 @@ def login_and_check(driver, wait):
             if new_handles:
                 driver.switch_to.window(new_handles[0])
                 print(f"🪟 ウィンドウ切り替え完了!: {driver.title}")
+                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
                 switched = True
                 break
         time.sleep(1)
@@ -92,47 +93,56 @@ def login_and_check(driver, wait):
     if not switched:
         print("🔍 別ウィンドウなし。現在のウィンドウで続行します。")
 
-    # 5. 【強化】描画待機条件のアップデート
-    print("🔎 検索結果の描画完了を待機中...")
-    try:
-        wait.until(lambda d: d.execute_script("""
-            let t = document.body.innerText;
-            return t.includes('詳細') || t.includes('DK') || t.includes('LDK') ||
-                   t.includes('該当するデータはありません') || t.includes('一致する物件はありません');
-        """))
-        print("✅ 描画を確認しました。")
-    except:
-        print("⚠️ 待機条件に一致しませんでしたが、スキャンを強行します。")
+    # 5. 【提示された最強ロジック】全フレームをPythonで巡回しつつJSでスキャン
+    print("🔎 全フレームを対象に空室スキャンを開始...")
+    time.sleep(5)
+    
+    found_vacant = False
+    all_target_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
+    
+    for target_f in all_target_frames:
+        try:
+            if target_f:
+                frame_name = target_f.get_attribute("name") or target_f.get_attribute("id") or "(no name)"
+                print(f"🔍 フレーム切り替え中: {frame_name}")
+                driver.switch_to.frame(target_f)
+            else:
+                print("🔍 メインフレームをスキャン中...")
 
-    time.sleep(3) # 最終的なレンダリングバッファ
-    
-    # 6. 【強化】全角・半角対応のキーワードスキャン
-    found_vacant = driver.execute_script("""
-        function scan(w) {
-            try {
-                const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K', '１ＤＫ', '２ＤＫ', '１ＬＤＫ', '２ＬＤＫ'];
-                let images = w.document.getElementsByTagName('img');
-                for (let img of images) {
-                    let text = ((img.alt || "") + (img.src || "") + (img.parentElement ? img.parentElement.innerText : "")).toUpperCase();
-                    if (keywords.some(k => text.includes(k))) return true;
+            # 各フレーム内で再帰スキャンJSを実行
+            res = driver.execute_script("""
+                function scan(w) {
+                    try {
+                        const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K', '１ＤＫ', '２ＤＫ', '１ＬＤＫ', '２ＬＤＫ'];
+                        let images = w.document.getElementsByTagName('img');
+                        for (let img of images) {
+                            let text = ((img.alt || "") + (img.src || "") + (img.parentElement ? img.parentElement.innerText : "")).toUpperCase();
+                            if (keywords.some(k => text.includes(k))) return true;
+                        }
+                        let bodyText = w.document.body.innerText.toUpperCase();
+                        if (keywords.some(k => bodyText.includes(k))) return true;
+
+                        for (let i = 0; i < w.frames.length; i++) {
+                            if (scan(w.frames[i])) return true;
+                        }
+                    } catch (e) { return false; }
+                    return false;
                 }
-                let bodyText = w.document.body.innerText.toUpperCase();
-                if (keywords.some(k => bodyText.includes(k))) return true;
-                
-                for (let i = 0; i < w.frames.length; i++) {
-                    if (scan(w.frames[i])) return true;
-                }
-            } catch (e) { return false; }
-            return false;
-        }
-        return scan(window);
-    """)
-    
-    if found_vacant:
-        print("✅ キーワードに一致する空室情報を検出しました。")
-    else:
-        print("❌ キーワードに一致する空室情報は見つかりませんでした。")
-        
+                return scan(window);
+            """)
+            
+            if res:
+                print("✅ 空室情報を検知しました！")
+                found_vacant = True
+                break
+        except Exception as e:
+            print(f"⚠️ フレームスキャン中にスキップ: {e}")
+        finally:
+            driver.switch_to.default_content()
+
+    if not found_vacant:
+        print("❌ 全フレームを走査しましたが、キーワードは見つかりませんでした。")
+
     return found_vacant
 
 def main():
