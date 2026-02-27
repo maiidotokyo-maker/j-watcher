@@ -75,7 +75,7 @@ def login_and_check(driver, wait):
 
     if not found_area: return False
 
-    # 4. 新しいウィンドウの出現を最大20秒監視
+    # 4. 新しいウィンドウの出現を監視
     print("⏳ 検索結果ウィンドウを待機中...")
     switched = False
     for i in range(20):
@@ -93,7 +93,7 @@ def login_and_check(driver, wait):
     if not switched:
         print("🔍 別ウィンドウなし。現在のウィンドウで続行します。")
 
-    # 5. 【提示された最強ロジック】全フレームをPythonで巡回しつつJSでスキャン
+    # 5. 【最強ロジック】全フレームをPythonで巡回しつつJSでスキャン
     print("🔎 全フレームを対象に空室スキャンを開始...")
     time.sleep(5)
     
@@ -136,7 +136,7 @@ def login_and_check(driver, wait):
                 found_vacant = True
                 break
         except Exception as e:
-            print(f"⚠️ フレームスキャン中にスキップ: {e}")
+            print(f"⚠️ スキャン中にスキップ: {e}")
         finally:
             driver.switch_to.default_content()
 
