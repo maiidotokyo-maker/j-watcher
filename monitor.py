@@ -49,30 +49,37 @@ def login_and_check(driver, wait):
         else if(typeof submitNext === 'function') submitNext();
     """)
     
-    time.sleep(8)
+    time.sleep(10)
 
-    # 3. エリア選択（世田谷区）
-    print("🎯 エリア選択（世田谷区）...")
-    found_area = False
-    all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
-    
-    for f in all_frames:
-        try:
-            if f: driver.switch_to.frame(f)
-            checkboxes = driver.find_elements(By.CSS_SELECTOR, "input[value='113']")
-            if checkboxes:
-                driver.execute_script("arguments[0].click();", checkboxes[0])
-                print("✅ 世田谷区を選択完了")
-                found_area = True
-                driver.execute_script("""
-                    let sBtn = document.querySelector('img[src*=\"btn_search\"], a[onclick*=\"doSearch\"]');
-                    if(sBtn) sBtn.click(); else if(typeof doSearch === 'function') doSearch();
-                """)
-                break
-        except: pass
-        finally: driver.switch_to.default_content()
+    # 3. エリア選択（世田谷区）を再帰スキャンで確実に実行
+    print("🎯 エリア選択（世田谷区）スキャン開始...")
+    area_selected = driver.execute_script("""
+        function selectArea(w) {
+            try {
+                // 世田谷区のチェックボックス(value='113')を探す
+                let cb = w.document.querySelector("input[value='113']");
+                if (cb) {
+                    cb.click();
+                    // 検索ボタン(btn_search または doSearch)を探して押す
+                    let sBtn = w.document.querySelector('img[src*="btn_search"], a[onclick*="doSearch"]');
+                    if (sBtn) { sBtn.click(); } 
+                    else if (typeof w.doSearch === 'function') { w.doSearch(); }
+                    return true;
+                }
+                for (let i = 0; i < w.frames.length; i++) {
+                    if (selectArea(w.frames[i])) return true;
+                }
+            } catch (e) { return false; }
+            return false;
+        }
+        return selectArea(window);
+    """)
 
-    if not found_area: return False
+    if area_selected:
+        print("✅ 世田谷区を選択し、検索を開始しました。")
+    else:
+        print("❌ 世田谷区の選択に失敗しました。")
+        return False
 
     # 4. 新しいウィンドウの出現を監視
     print("⏳ 検索結果ウィンドウを待機中...")
@@ -84,7 +91,7 @@ def login_and_check(driver, wait):
             if new_handles:
                 driver.switch_to.window(new_handles[0])
                 print(f"🪟 ウィンドウ切り替え完了!: {driver.title}")
-                WebDriverWait(driver, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
+                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
                 switched = True
                 break
         time.sleep(1)
@@ -92,20 +99,17 @@ def login_and_check(driver, wait):
     if not switched:
         print("🔍 別ウィンドウなし。現在のウィンドウで続行します。")
 
-    # 5. 描画完了の明示的な待機
-    print("⌛ 検索結果の描画完了を追加で待機中...")
+    # 5. 描画完了の待機
+    print("⌛ 検索結果の描画を待機中...")
     try:
         wait.until(lambda d: d.execute_script("""
             let t = document.body.innerText;
-            return t.includes('詳細') || t.includes('物件') || t.includes('間取り') || t.includes('該当するデータはありません');
+            return t.includes('詳細') || t.includes('物件') || t.includes('DK') || t.includes('データはありません');
         """))
-        print("✅ 検索結果の描画を確認しました。")
-    except:
-        print("⚠️ 描画完了の検知に失敗しましたが、スキャンを続行します。")
-
+    except: pass
     time.sleep(3)
 
-    # 6. 全フレームをPythonで巡回しつつJSで再帰スキャン
+    # 6. 全フレームをPythonで巡回しつつJSでスキャン
     print("🔎 全フレームを対象に空室スキャンを開始...")
     found_vacant = False
     all_target_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
@@ -123,8 +127,7 @@ def login_and_check(driver, wait):
                 function scan(w) {
                     try {
                         const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K',
-                                          '１ＤＫ', '２ＤＫ', '１ＬＤＫ', '２ＬＤＫ',
-                                          '物件', '詳細', '間取り'];
+                                          '１ＤＫ', '２ＤＫ', '１ＬＤＫ', '２ＬＤＫ', '詳細'];
                         let images = w.document.getElementsByTagName('img');
                         for (let img of images) {
                             let text = ((img.alt || "") + (img.src || "") + (img.parentElement ? img.parentElement.innerText : "")).toUpperCase();
@@ -152,7 +155,7 @@ def login_and_check(driver, wait):
             driver.switch_to.default_content()
 
     if not found_vacant:
-        print("❌ 全フレームを走査しましたが、キーワードは見つかりませんでした。")
+        print("❌ 全走査しましたが、キーワードは見つかりませんでした。")
 
     return found_vacant
 
