@@ -18,71 +18,86 @@ def main():
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--window-size=1280,1024')
+    # ユーザーエージェントをより一般的に
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        # 手順1: ここが生命線。必ず「玄関」から入る。
-        log("🚪 手順1: JKKねっとの玄関ページへアクセス")
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
+        # 手順1: ここが重要。サブドメインではなく、大本の www.to-kousya.or.jp から入る。
+        log("🚪 手順1: 公社公式サイトのトップ(www)へアクセス")
+        driver.get("https://www.to-kousya.or.jp/")
         time.sleep(5)
 
-        # 手順2: URL移動せず、ページ内のログインボタンを「クリック」する
-        log("🔍 手順2: ページ内のログインボタンを物理的に探します")
-        # 複数の可能性（aタグ、画像ボタン、onclick属性）を考慮
-        login_btn = None
+        # 手順2: 「JKKねっと」へのリンクを物理的に探してクリック
+        # これによりブラウザに正規のセッションが紐付きます
+        log("🔍 手順2: ページ内の『JKKねっと』ボタンを探します")
+        entrance = None
         selectors = [
-            "//a[contains(@onclick, 'mypageLogin')]",
-            "//area[contains(@onclick, 'mypageLogin')]",
-            "//img[contains(@src, 'login')]/..",
-            "//a[contains(text(), 'ログイン')]"
+            "//a[contains(@href, 'jkknet')]",
+            "//img[contains(@alt, 'JKKねっと')]/..",
+            "//a[contains(text(), '空き家検索')]"
         ]
         
         for sel in selectors:
-            elements = driver.find_elements(By.XPATH, sel)
-            if elements:
-                login_btn = elements[0]
+            els = driver.find_elements(By.XPATH, sel)
+            if els:
+                entrance = els[0]
                 break
 
-        if login_btn:
-            log("🎯 ボタン発見。物理クリックを実行します（これで『くじら』を回避）")
-            driver.execute_script("arguments[0].click();", login_btn)
+        if entrance:
+            log(f"🎯 入り口発見（{entrance.get_attribute('href')}）。クリックします。")
+            driver.execute_script("arguments[0].click();", entrance)
             time.sleep(5)
             
-            # 別窓が開くタイプの場合、新しい窓に切り替え
-            if len(driver.window_handles) > 1:
-                driver.switch_to.window(driver.window_handles[-1])
-                log(f"📑 ログイン窓に切り替え完了: {driver.current_url}")
+            # ページ遷移後、ログインボタンを探索
+            log("🔍 手順3: ログインボタンの探索")
+            login_btn = None
+            xpath_list = [
+                "//a[contains(@onclick, 'mypageLogin')]",
+                "//img[contains(@src, 'login')]/..",
+                "//a[contains(text(), 'ログイン')]"
+            ]
             
-            # 手順3: ようやく入力（ここまできたら、くじらはいないはず）
-            log("⌨️ 手順3: IDとPWを投入します")
-            u_field = driver.find_element(By.NAME, "uid")
-            p_field = driver.find_element(By.NAME, "passwd")
+            for xpath in xpath_list:
+                btns = driver.find_elements(By.XPATH, xpath)
+                if btns:
+                    login_btn = btns[0]
+                    break
             
-            u_field.clear()
-            u_field.send_keys(os.environ.get("JKK_ID"))
-            p_field.clear()
-            p_field.send_keys(os.environ.get("JKK_PASSWORD"), Keys.ENTER)
-            
-            log("⏳ ログイン処理の完了を待ちます（10秒）...")
-            time.sleep(10)
-            
-            log(f"✅ 最終URL: {driver.current_url}")
-            log(f"📄 最終タイトル: {driver.title}")
-            
-            if "マイページ" in driver.title or "ログアウト" in driver.page_source:
-                log("🎉 ログイン成功！突破しました！")
+            if login_btn:
+                log("🚀 ログインボタンをクリック（正規ルート遷移）")
+                driver.execute_script("arguments[0].click();", login_btn)
+                time.sleep(5)
+                
+                # ポップアップ対応
+                if len(driver.window_handles) > 1:
+                    driver.switch_to.window(driver.window_handles[-1])
+                
+                log("⌨️ 手順4: ID/PWの投入")
+                # ここで見つからなければ、やはり『くじら』が邪魔をしています
+                u = driver.find_element(By.NAME, "uid")
+                p = driver.find_element(By.NAME, "passwd")
+                
+                u.send_keys(os.environ.get("JKK_ID"))
+                p.send_keys(os.environ.get("JKK_PASSWORD"), Keys.ENTER)
+                
+                time.sleep(10)
+                log(f"📄 最終結果タイトル: {driver.title}")
+                if "マイページ" in driver.title or "ログイン" not in driver.title:
+                    log("🎉 成功！ついに突破しました！")
+                else:
+                    log("💀 ログイン失敗（入力内容または手順の不備）")
             else:
-                log("💀 ログイン失敗。まだ何かが足りません。")
-                driver.save_screenshot("login_result.png")
+                log("🚨 ログインボタンに到達できません。")
+                driver.save_screenshot("step_3_fail.png")
         else:
-            log("🚨 玄関ページにログインボタンが見つかりません。")
-            driver.save_screenshot("no_button_at_entrance.png")
+            log("🚨 そもそも公式サイトからJKKねっとへの入り口が見つかりません。")
+            driver.save_screenshot("step_2_fail.png")
 
     except Exception as e:
         log(f"❌ エラー発生: {e}")
-        driver.save_screenshot("crash.png")
+        driver.save_screenshot("crash_report.png")
     finally:
         driver.quit()
 
