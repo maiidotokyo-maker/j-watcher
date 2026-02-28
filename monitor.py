@@ -29,31 +29,35 @@ def login_and_check(driver, wait):
     driver.get(LOGIN_URL)
     time.sleep(5)
 
-    # 【デバッグ】要素検出チェック（ユーザー提案のコードを強化）
-    print("🧪 ログイン要素の検出テスト...")
-    status = driver.execute_script(f"""
-        function findAndFill(w) {{
-            try {{
+    # JavaScriptに引数としてID/PASSを渡す（f-stringエラーを回避）
+    print("🧪 ログイン要素の検出と入力試行...")
+    status = driver.execute_script("""
+        const jkk_id = arguments[0];
+        const jkk_pass = arguments[1];
+        
+        function findAndFill(w) {
+            try {
                 let uid = w.document.querySelector('input[id*="user"], input[name*="user"]');
                 let upw = w.document.querySelector('input[type="password"]');
                 let btn = w.document.querySelector('img[src*="btn_login"], input[src*="btn_login"], a[onclick*="login"]');
                 
-                if (uid && upw) {{
-                    uid.value = "{JKK_ID}";
-                    upw.value = "{JKK_PASS}";
+                if (uid && upw) {
+                    uid.value = jkk_id;
+                    upw.value = jkk_pass;
                     if (btn) btn.click();
                     return "SUCCESS";
-                }}
-                for (let i = 0; i < w.frames.length; i++) {{
+                }
+                for (let i = 0; i < w.frames.length; i++) {
                     let res = findAndFill(w.frames[i]);
                     if (res === "SUCCESS") return "SUCCESS";
-                }}
-            } catch(e) {{}}
+                }
+            } catch(e) { return "ERROR_IN_JS"; }
             return "NOT_FOUND";
-        }}
+        }
         return findAndFill(window);
-    """)
-    print(f"📊 ログイン試行結果: {status}")
+    """, JKK_ID, JKK_PASS)
+    
+    print(f"📊 ログイン処理結果: {status}")
 
     # 2. ログイン成否の判定
     try:
@@ -61,10 +65,10 @@ def login_and_check(driver, wait):
         print("✅ ログイン成功を確認しました。")
     except:
         driver.save_screenshot("login_error.png")
-        print("❌ ログイン失敗。画面を確認してください。")
+        print("❌ ログイン失敗または遷移遅延。login_error.pngを確認してください。")
         return False
 
-    # 3. 検索画面へ移動（メニューボタンをクリック）
+    # 3. 検索画面へ移動
     print("📍 メニューから検索画面へ移動中...")
     driver.execute_script("""
         let btn = Array.from(document.querySelectorAll('a, img, input')).find(el => 
@@ -73,10 +77,10 @@ def login_and_check(driver, wait):
         if(btn) btn.click(); else if(typeof submitNext === 'function') submitNext();
     """)
     
-    # 4. エリア選択（世田谷区）- 粘り強くリトライ
+    # 4. エリア選択（世田谷区）
     print("🎯 エリア選択（世田谷区）を実行中...")
     area_found = False
-    for i in range(6): # 最大30秒待機
+    for i in range(6):
         time.sleep(5)
         area_found = driver.execute_script("""
             function selectArea(w) {
@@ -103,6 +107,7 @@ def login_and_check(driver, wait):
 
     if not area_found:
         driver.save_screenshot("area_error.png")
+        print("❌ エリア選択に失敗しました。")
         return False
 
     # 5. ウィンドウ切り替え
@@ -110,6 +115,7 @@ def login_and_check(driver, wait):
     for _ in range(15):
         if len(driver.window_handles) > 1:
             driver.switch_to.window([h for h in driver.window_handles if h != main_handle][0])
+            print(f"🪟 ウィンドウ切り替え完了: {driver.title}")
             break
         time.sleep(1)
 
@@ -120,7 +126,8 @@ def login_and_check(driver, wait):
         function scan(w) {
             try {
                 const keywords = ['DK', 'LDK', '1DK', '2DK', '1LDK', '2LDK', 'K', '詳細', '物件'];
-                if (keywords.some(k => w.document.body.innerText.toUpperCase().includes(k))) return true;
+                let text = w.document.body.innerText.toUpperCase();
+                if (keywords.some(k => text.includes(k))) return true;
                 for (let i = 0; i < w.frames.length; i++) {
                     if (scan(w.frames[i])) return true;
                 }
@@ -138,7 +145,7 @@ def main():
         if login_and_check(driver, wait):
             print("🚨 空室発見！")
             requests.post(DISCORD_WEBHOOK_URL, json={
-                "content": "🏠 **JKK世田谷区：空室あり！**\nすぐ確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+                "content": "🏠 **JKK世田谷区：空室あり！**\\nすぐ確認してください！\\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
             })
         else:
             print("👀 空室なし。")
