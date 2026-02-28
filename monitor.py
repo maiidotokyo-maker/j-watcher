@@ -16,13 +16,12 @@ START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
 
 def setup_driver():
     options = Options()
-    # 最新のヘッドレスではなく、あえて挙動が少し鈍い（＝レトロに優しい）古いヘッドレス
-    options.add_argument('--headless=old')
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1024,768')
-    # UAも少し古めの設定にして、サーバーを油断させます
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko')
+    options.add_argument('--window-size=1280,1024')
+    options.add_argument('--lang=ja-JP')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
@@ -30,72 +29,86 @@ def main():
     try:
         driver = setup_driver()
         
-        log("🕰️ 時代を遡ります。玄関ページへ...")
+        log("🕰️ 玄関ページに潜入...")
         driver.get(START_URL)
-        time.sleep(10) # 玄関でしっかりとお辞儀（待機）
+        time.sleep(10) # 玄関でサーバーが落ち着くのを待つ
         
-        log("💉 ログイン用『器』を物理的に構築中...")
-        # 玄関ページで「ログイン」ボタンを押すのではなく、
-        # その場で「JKK_WIN」という名前の自分自身のクローンを作り直すイメージです
+        log("💉 サイト自身のJavaScript（mypageLogin）に身を任せます...")
+        # 自分でURLを開かず、サイトの関数を「踏み台」にする
+        # 同時に window.open を横取り（フック）して、ヘッドレスでも確実に窓を捉える
         driver.execute_script("""
-            window.name = "JKK_TOP";
-            var f = document.createElement('form');
-            f.action = 'https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin';
-            f.method = 'GET';
-            f.target = 'JKK_WIN'; // これが重要
-            document.body.appendChild(f);
-            window.open('', 'JKK_WIN', 'width=800,height=600');
-            f.submit();
+            window.target_url = null;
+            var originalOpen = window.open;
+            window.open = function(url, name, specs) {
+                window.target_url = url;
+                window.target_name = name;
+                return originalOpen(url, name, specs);
+            };
+            // サイトのログイン関数をキック
+            if(typeof mypageLogin === 'function') {
+                mypageLogin();
+            } else {
+                // 関数がない場合はボタンを探して物理クリック
+                var btn = document.querySelector('img[src*="btn_login"], a[onclick*="mypageLogin"]');
+                if(btn) btn.click();
+            }
         """)
         
-        time.sleep(15) # セッションが同期されるのをじっくり待つ
-        
-        # ログイン窓（別窓として開いているはず）へ切り替え
+        time.sleep(15) # ポップアップの生成とJSPの裏通信を待つ
+
+        # 窓の切り替え
         handles = driver.window_handles
-        driver.switch_to.window(handles[-1])
+        if len(handles) > 1:
+            driver.switch_to.window(handles[-1])
+            log(f"🪟 サイトが自ら開いた窓に移動完了: {driver.title}")
+        else:
+            log("🚨 窓が分かれませんでした。メイン画面のURLを確認します。")
+
+        log(f"DEBUG: 現在のURL: {driver.current_url}")
         
-        log(f"🔎 ログイン窓を捕捉。Title: {driver.title}")
-        log(f"🔎 Window Name: {driver.execute_script('return window.name;')}")
-
-        if "おわび" in driver.title:
-            log("🚨 まだおわびが出ますか...。最終手段、リフレッシュ連打を試みます。")
-            driver.refresh()
-            time.sleep(10)
-
-        # フォームの探索
-        def find_and_fill(d):
-            # レトロサイトはフレームに隠れがちなので default_content から全探索
+        # --- ここからがレトロ迷宮（Frameset）探索 ---
+        def deep_hunt(d):
+            # name属性が 'uid' のものを探す（JSPの定番）
             u = d.find_elements(By.NAME, "uid")
-            p = d.find_elements(By.XPATH, "//input[@type='password']")
+            p = d.find_elements(By.NAME, "passwd") # password ではなく passwd の可能性
+            if not p:
+                p = d.find_elements(By.XPATH, "//input[@type='password']")
+
             if u and p:
-                log("🎯 ついに『生身』のフォームに到達しました！")
+                log("🎯 ついに『本物の入力欄』を捕捉！")
                 u[0].send_keys(os.environ.get("JKK_ID"))
                 p[0].send_keys(os.environ.get("JKK_PASSWORD"))
                 
-                # クリックもJSではなく、物理的な座標クリックをエミュレート
-                btn = d.find_element(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]")
-                btn.click()
+                # 送信。画像ボタン（<input type="image">）を優先
+                btn = d.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')]")
+                if btn:
+                    log("🖱️ ログイン画像ボタンをクリック。")
+                    btn[0].click()
+                else:
+                    p[0].submit()
                 return True
             
-            # フレームがあれば再帰的に
+            # フレーム構造（Frameset/Frame）を再帰的に掘る
             frames = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
             for i in range(len(frames)):
                 try:
                     d.switch_to.frame(i)
-                    if find_and_fill(d): return True
+                    if deep_hunt(d): return True
                     d.switch_to.parent_frame()
                 except: continue
             return False
 
-        if find_and_fill(driver):
-            log("🚀 ログイン情報を送信。成功を祈ります。")
+        if deep_hunt(driver):
+            log("🚀 ログイン情報を送信。運命の瞬間です。")
             time.sleep(15)
             log(f"最終URL: {driver.current_url}")
+            log(f"最終Title: {driver.title}")
         else:
-            log("🚨 フォームが見つかりませんでした。レトロの壁、高し...")
+            log("🚨 依然としてフォームがありません。")
+            log(f"最終ソース断片: {driver.page_source[-500:]}")
 
     except Exception as e:
-        log(f"❌ 時代錯誤なエラー: {e}")
+        log(f"❌ 時代錯誤エラー: {e}")
     finally:
         if driver: driver.quit()
 
