@@ -11,7 +11,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
-# --- ログ出力の強化（リアルタイム表示用） ---
+# --- ログ出力の強化（GitHub Actionsのリアルタイム表示用） ---
 sys.stdout.reconfigure(encoding='utf-8')
 
 def log(msg):
@@ -21,7 +21,6 @@ log("🚀 スクリプトを開始します...")
 
 # --- 環境変数の取得 ---
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
-LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 AREA_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/vacancy/area"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
@@ -44,11 +43,10 @@ def find_and_fill_recursive(driver, jkk_id, jkk_pass, dry_run=False):
         # パスワード欄をログイン画面の「絶対的な目印」とする
         pws = driver.find_elements(By.XPATH, "//input[@type='password']")
         if pws:
-            if dry_run:
-                return True
+            if dry_run: return True
             
-            # 実際の入力処理
-            uids = driver.find_elements(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user') or contains(@id, 'Id')]")
+            # 実際の入力処理（UID/PASS）
+            uids = driver.find_elements(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user')]")
             if uids:
                 uids[0].clear()
                 uids[0].send_keys(jkk_id)
@@ -87,31 +85,7 @@ def wait_for_login_form_recursive(driver, timeout=30):
             log("✅ ログインフォームを検出しました！")
             return True
         time.sleep(3)
-    
-    log("❌ ログインフォームが見つかりませんでした。")
-    driver.save_screenshot("error_login_not_found.png")
     return False
-
-def check_login_success(driver):
-    """ログイン後の画面に遷移したか確認"""
-    try:
-        driver.switch_to.default_content()
-        # ログイン後に出現するキーワードをチェック
-        keywords = ["ログアウト", "マイページ", "空室", "メニュー"]
-        
-        def search_text(d):
-            if any(k in d.page_source for k in keywords):
-                return True
-            fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
-            for i in range(len(fms)):
-                d.switch_to.frame(i)
-                if search_text(d): return True
-                d.switch_to.parent_frame()
-            return False
-            
-        return search_text(driver)
-    except:
-        return False
 
 def select_area_and_scan(driver):
     log(f"📍 エリア選択画面へ移動: {AREA_URL}")
@@ -119,6 +93,7 @@ def select_area_and_scan(driver):
     time.sleep(8)
 
     log("🎯 世田谷区(113)を選択中...")
+    # JavaScriptでフレームを越えてチェックボックスをクリックし検索実行
     selected = driver.execute_script("""
         function selectRecursive(w) {
             try {
@@ -140,13 +115,12 @@ def select_area_and_scan(driver):
 
     if not selected:
         log("❌ 世田谷区の選択に失敗しました。")
-        driver.save_screenshot("error_area_select.png")
         return False
 
     log("🔎 空室状況をスキャン中...")
     time.sleep(10)
 
-    # 別ウィンドウが開いた場合の処理
+    # 別ウィンドウが開いた場合に対応
     if len(driver.window_handles) > 1:
         driver.switch_to.window(driver.window_handles[-1])
 
@@ -180,16 +154,23 @@ def main():
         driver.get(START_URL)
         time.sleep(5)
 
-        log("🖱️ ログインページへ移動...")
-        driver.get(LOGIN_URL) # ここでダメなら玄関のボタンクリックに変更が必要
+        log("🖱️ ログインシーケンス開始（JavaScript実行）...")
+        # サイト内の mypageLogin 関数を直接叩いて正規のセッションを開始
+        driver.execute_script("""
+            if (typeof mypageLogin === 'function') {
+                mypageLogin();
+            } else {
+                let lnk = document.querySelector("a[onclick*='mypageLogin'], area[onclick*='mypageLogin']");
+                if (lnk) lnk.click();
+            }
+        """)
+        time.sleep(5)
         
         if not wait_for_login_form_recursive(driver):
-            # 予備手段: 直接URLでダメな場合、トップページのボタンを探す
-            log("⚠️ 直接遷移でフォームが見つからないため、ボタンクリックを試みます...")
-            driver.get(START_URL)
-            time.sleep(3)
-            driver.execute_script("document.querySelectorAll('a, img').forEach(el => { if(el.alt=='ログイン' || el.innerText.includes('ログイン')) el.click(); });")
+            log("⚠️ ボタンクリックで失敗。最終手段：URL直接アクセスを試みます...")
+            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
             if not wait_for_login_form_recursive(driver):
+                driver.save_screenshot("error_login_form.png")
                 return
 
         log("⌨️ ログイン情報を入力中...")
@@ -198,25 +179,15 @@ def main():
             log("✅ 送信完了。ログイン判定待ち...")
             time.sleep(15)
             
-            if check_login_success(driver):
-                log("🚨 ログイン突破成功！！！")
-                if select_area_and_scan(driver):
-                    log("🏠 【空室あり】世田谷区に見つかりました！")
-                    if DISCORD_WEBHOOK_URL:
-                        now = datetime.now().strftime('%Y/%m/%d %H:%M:%S')
-                        msg = {
-                            "content": (
-                                f"🏠 **JKK世田谷区：空室あり！**\n"
-                                f"🕒 検出: {now}\n"
-                                f"🔗 サイト: {START_URL}"
-                            )
-                        }
-                        requests.post(DISCORD_WEBHOOK_URL, json=msg)
-                else:
-                    log("👀 現在、世田谷区に空室はありません。")
+            # ログイン後のエリア選択・スキャン
+            if select_area_and_scan(driver):
+                log("🚨 【空室あり】世田谷区に見つかりました！")
+                if DISCORD_WEBHOOK_URL:
+                    now = datetime.now().strftime('%Y/%m/%d %H:%M:%S')
+                    msg = {"content": f"🏠 **JKK世田谷区：空室あり！**\n🕒 検出: {now}\n🔗 {START_URL}"}
+                    requests.post(DISCORD_WEBHOOK_URL, json=msg)
             else:
-                log("❌ ログイン後の画面を確認できませんでした。")
-                driver.save_screenshot("error_after_login.png")
+                log("👀 現在、世田谷区に空室はありません。")
 
     except Exception as e:
         log(f"❌ 予期せぬエラー: {e}")
