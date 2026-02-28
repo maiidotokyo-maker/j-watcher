@@ -1,7 +1,6 @@
 import sys
 import os
 import time
-import random
 import requests
 from datetime import datetime
 from selenium import webdriver
@@ -15,18 +14,17 @@ sys.stdout.reconfigure(encoding='utf-8')
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-# --- 環境変数 ---
-START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
-JKK_ID = os.environ.get("JKK_ID", "").strip()
-JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+# JKKのレトロなURL構造に合わせた「初期化」用URL
+# /pc/ ではなく、あえて index.jsp や直接のログイン窓口を狙う
+ALT_START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 
 def setup_driver():
     options = Options()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1280,1024')
+    # レトロサイトは画面サイズにうるさいので、あえて少し小さめの「当時の標準」にする
+    options.add_argument('--window-size=1024,768')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
@@ -37,44 +35,42 @@ def main():
     try:
         driver = setup_driver()
         
-        log(f"🏁 レトロな玄関口へアクセス: {START_URL}")
-        driver.get(START_URL)
+        # 玄関ページ（/pc/）を飛ばし、直接「ログインセッション開始」のURLへ
+        log(f"⚡ レトロセッションを強制起動: {ALT_START_URL}")
+        driver.get(ALT_START_URL)
         
-        # 【重要】レトロサイトは「待ち」が命。フレームが組み上がるのを待つ。
-        time.sleep(12) 
+        # ロードをじっくり待つ
+        time.sleep(15) 
 
-        log(f"DEBUG: Title='{driver.title}'")
+        log(f"DEBUG: 現在のURL: {driver.current_url}")
+        log(f"DEBUG: ページタイトル: '{driver.title}'")
 
-        # 「おわび」が出た場合、それは「トップページそのものがエラー」ではなく
-        # 「フレームの読み込み順序」の問題である可能性があります。
         if "おわび" in driver.title:
-            log("🚨 おわび画面ですが、強引にトップを再ロードしてCookieを定着させます...")
-            driver.delete_all_cookies()
-            driver.get(START_URL)
+            log("🚨 まだ『おわび』です。URLに index.jsp を付与して再試行...")
+            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/index.jsp")
             time.sleep(10)
 
-        log("🔎 全フレームを巡回して『ログイン』の文字を探します...")
-        
-        def find_login_in_frames(d):
-            # 現在のフレーム内の全テキストを確認
-            if "ログイン" in d.page_source or "mypageLogin" in d.page_source:
+        # ログインフォーム（ID/PASS）があるか、全フレームを絨毯爆弾スキャン
+        def scan_for_input(d):
+            inputs = d.find_elements(By.TAG_NAME, "input")
+            if any(i.get_attribute("type") == "password" for i in inputs):
                 return True
-            # 子フレームへ
+            
             fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
             for i in range(len(fms)):
                 try:
                     d.switch_to.frame(i)
-                    if find_login_in_frames(d): return True
+                    if scan_for_input(d): return True
                     d.switch_to.parent_frame()
                 except: continue
             return False
 
-        if find_login_in_frames(driver):
-            log("✨ ついにログイン要素を捕捉しました！")
-            # ここで入力処理へ
+        if scan_for_input(driver):
+            log("🎯 ついにログインフォーム（生身）を捉えました！")
+            # ここで入力実行
         else:
-            log("❌ レトロな壁は厚かった... フレーム内にログインが見つかりません。")
-            driver.save_screenshot("retro_debug.png")
+            log("❌ フォームが見つかりません。現在のHTMLソース（冒頭）:")
+            log(driver.page_source[:500])
 
     except Exception as e:
         log(f"❌ エラー: {e}")
