@@ -12,7 +12,6 @@ sys.stdout.reconfigure(encoding='utf-8')
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-# 玄関URL
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
 
 def setup_driver():
@@ -21,9 +20,12 @@ def setup_driver():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1280,1024')
-    # 言語設定を「日本語」に固定（Shift-JISサイトには必須）
     options.add_argument('--lang=ja-JP')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+    
+    # ポップアップブロックを完全に無効化する設定
+    options.add_experimental_option("prefs", {"profile.default_content_settings.popups": 1})
+    
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
@@ -31,47 +33,64 @@ def main():
     try:
         driver = setup_driver()
         
-        log("🚪 玄関ページへ正規アクセス...")
+        log("🚪 玄関ページにアクセス...")
         driver.get(START_URL)
-        time.sleep(10) # 完全に読み込みが終わるまで待つ
+        time.sleep(10)
         
-        log("🖱️ サイト内関数 'mypageLogin' を直接呼び出します...")
-        # Seleniumのクリックではなく、ブラウザ内部で定義されているはずの関数を叩く
-        # これにより、サイトが期待する「正しい遷移パラメータ」が生成されます
+        # --- レトロサイト攻略の核：window.openのフック ---
+        log("💉 window.open を無効化し、カレントウィンドウでの遷移に書き換えます...")
+        driver.execute_script("""
+            window.open = function(url, name, features) {
+                console.log('Redirecting to: ' + url);
+                window.location.href = url;
+                return window;
+            };
+        """)
+        
+        log("🖱️ ログイン関数を実行...")
         driver.execute_script("if(window.mypageLogin){ mypageLogin(); }")
         
-        # 遷移（別窓またはフレーム生成）をじっくり待つ
-        time.sleep(20)
+        # 遷移を待つ（ここが勝負）
+        time.sleep(15)
 
-        # レトロサイト特有の「窓が切り替わったか」のチェック
-        if len(driver.window_handles) > 1:
-            log("🪟 別ウィンドウを検知。切り替えます。")
-            driver.switch_to.window(driver.window_handles[-1])
+        log(f"DEBUG: 現在のURL: {driver.current_url}")
+        log(f"DEBUG: タイトル: {driver.title}")
 
-        log(f"DEBUG: URL={driver.current_url} Title='{driver.title}'")
+        if "おわび" in driver.title:
+            log("🚨 まだ『おわび』です。URL直撃に切り替えます...")
+            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
+            time.sleep(10)
 
-        def deep_scan(d):
-            # ID/PASS入力欄の探索
-            inputs = d.find_elements(By.NAME, "uid") + d.find_elements(By.XPATH, "//input[@type='password']")
-            if inputs:
+        # ログインフォームを全フレームから探す
+        def find_and_fill(d):
+            # name='uid' や type='password' を探す
+            u = d.find_elements(By.NAME, "uid")
+            p = d.find_elements(By.XPATH, "//input[@type='password']")
+            if u and p:
+                log("🎯 ついにログインフォームを捕捉！")
+                u[0].send_keys(os.environ.get("JKK_ID"))
+                p[0].send_keys(os.environ.get("JKK_PASSWORD"))
+                # submit
+                btn = d.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')]")
+                if btn: btn[0].click()
+                else: p[0].submit()
                 return True
-            # フレーム探索
+            
             fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
             for i in range(len(fms)):
                 try:
                     d.switch_to.frame(i)
-                    if deep_scan(d): return True
+                    if find_and_fill(d): return True
                     d.switch_to.parent_frame()
                 except: continue
             return False
 
-        if deep_scan(driver):
-            log("🎯 ログインフォームに到達しました！")
-            # 入力処理...
+        if find_and_fill(driver):
+            log("✅ ログイン成功の兆し。送信完了。")
+            time.sleep(10)
+            log(f"最終URL: {driver.current_url}")
         else:
-            log("🚨 依然としてフォームが見つかりません。")
-            # ソースの末尾まで取得できているか確認
-            log(f"ソース末尾: {driver.page_source[-200:]}")
+            log("❌ フォームがありませんでした。")
 
     except Exception as e:
         log(f"❌ エラー: {e}")
