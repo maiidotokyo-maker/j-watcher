@@ -26,7 +26,17 @@ jobs:
       - name: Run monitor.py
         run: python monitor.py
         env:
-          # Cookieは渡さず、IDとPWのみで正攻法を挑む
           JKK_ID: ${{ secrets.JKK_ID }}
           JKK_PASSWORD: ${{ secrets.JKK_PASSWORD }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      # 失敗しても成功しても、生成されたデバッグファイルをGitHubにアップロードする
+      - name: Upload Debug Files
+        uses: actions/upload-artifact@v4
+        if: always() 
+        with:
+          name: jkk-debug-artifacts
+          path: |
+            *.png
+            *.html
+          retention-days: 3 # 3日間保存
