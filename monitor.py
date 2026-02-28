@@ -28,7 +28,6 @@ def setup_driver():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
-    # Bot検知回避の徹底
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
@@ -39,60 +38,66 @@ def setup_driver():
     })
     return driver
 
-def physical_click(driver, element):
-    """要素の真上までマウスを動かしてクリックする擬態"""
-    try:
-        actions = ActionChains(driver)
-        actions.move_to_element(element)
-        actions.pause(random.uniform(0.5, 1.0))
-        actions.click()
-        actions.perform()
-        return True
-    except:
-        return False
-
-def find_login_button_and_click(driver):
-    """玄関ページでログインボタンを物理的に探して押す"""
-    # 複数の候補（画像、リンク、エリアタグ）を探索
+def find_and_click_login_recursive(driver):
+    """全フレームを巡回して、物理的なログインボタンを探してクリックする"""
+    # 探索対象のセレクタ（優先度順）
     selectors = [
         "//area[contains(@onclick, 'mypageLogin')]",
         "//a[contains(@onclick, 'mypageLogin')]",
         "//img[contains(@alt, 'ログイン')]",
-        "//a[contains(text(), 'ログイン')]"
+        "//button[contains(text(), 'ログイン')]"
     ]
+    
     for sel in selectors:
-        btns = driver.find_elements(By.XPATH, sel)
-        if btns and btns[0].is_displayed():
-            log(f"🎯 ボタン発見 ({sel})。クリックします...")
-            return physical_click(driver, btns[0])
+        try:
+            btns = driver.find_elements(By.XPATH, sel)
+            for btn in btns:
+                if btn.is_displayed():
+                    log(f"🎯 ボタン発見: {sel}")
+                    # 人間らしくマウス移動してクリック
+                    actions = ActionChains(driver)
+                    actions.move_to_element(btn).pause(random.uniform(0.5, 1.2)).click().perform()
+                    return True
+        except:
+            continue
+
+    # 子フレームを再帰探索
+    frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+    for i in range(len(frames)):
+        try:
+            driver.switch_to.frame(i)
+            if find_and_click_login_recursive(driver):
+                return True
+            driver.switch_to.parent_frame()
+        except:
+            driver.switch_to.parent_frame()
     return False
 
 def main():
     driver = None
     try:
         driver = setup_driver()
-        log("🏁 玄関ページへアクセス...")
+        log(f"🏁 玄関ページへアクセス: {START_URL}")
         driver.get(START_URL)
-        time.sleep(random.uniform(5, 8))
+        time.sleep(random.uniform(6, 10))
 
-        # 1. 物理クリックを試みる
-        if not find_login_button_and_click(driver):
-            log("⚠️ ボタンが見つかりません。JS実行に切り替えます...")
-            driver.execute_script("if(window.mypageLogin) mypageLogin();")
-        
-        # 2. 遷移待ち（ここでおわびが出ないかチェック）
+        log("🖱️ ログインボタンをフレーム内から探索中...")
+        if not find_and_click_login_recursive(driver):
+            log("❌ ボタンがどこにも見つかりませんでした。")
+            driver.save_screenshot("button_not_found.png")
+            return
+
+        log("⏳ 遷移待ち...")
         time.sleep(15)
         log(f"DEBUG: URL={driver.current_url} Title={driver.title}")
 
         if "おわび" in driver.title:
-            log("🚨 おわび画面。最後の悪あがき：リロードを試行...")
-            driver.refresh()
-            time.sleep(10)
+            log("🚨 物理クリックしたのにおわび画面です。CookieまたはIPの制約が極めて強いです。")
+            return
 
-        # 3. 以降、フレーム内探索（既存ロジック）
-        # (ここから先はログインフォームを探すコードを繋げる)
-        # ※ 長くなるため、まずこの「おわび回避」が通るか確認しましょう
-
+        # ここから先、ID/PASS入力（以前の完成ロジックへ続く）
+        # ... (略) ...
+        
     except Exception as e:
         log(f"❌ エラー: {e}")
     finally:
