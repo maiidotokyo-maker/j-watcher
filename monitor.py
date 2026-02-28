@@ -13,7 +13,9 @@ sys.stdout.reconfigure(encoding='utf-8')
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
+# 玄関と、直接叩くべき「中身」のJSP
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
+DIRECT_LOGIN_JSP = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 
 def setup_driver():
     options = Options()
@@ -23,68 +25,63 @@ def setup_driver():
     options.add_argument('--window-size=1280,1024')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     options.add_argument('--lang=ja-JP')
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    return driver
 
 def main():
     driver = None
     try:
         driver = setup_driver()
         
-        log("🚪 玄関ページにアクセス中...")
+        # 1. まず玄関へ行き、Cookie（JSESSIONID）を強制的に発行させる
+        log("🚪 玄関ページにアクセス（Cookie取得用）...")
         driver.get(START_URL)
-        time.sleep(8)
+        time.sleep(10)
         
-        # 【最重要】レトロサイトの「別窓開き」を封じ、同じタブで開かせる
-        log("💉 ポップアップブロックを回避するスクリプトを注入...")
-        driver.execute_script("""
-            window.open = function(url) {
-                window.location.href = url;
-                return false;
-            };
-        """)
-
-        log("🖱️ ログイン処理を開始...")
-        # 直接 mypageLogin を叩くが、上の書き換えにより「今の画面」で遷移する
-        driver.execute_script("if(typeof mypageLogin === 'function'){ mypageLogin(); }")
-        
-        log("⏳ 遷移を待機（15秒）...")
+        # 2. 「おわび」が出ていても無視して、本丸のURLへ「上書き」アクセスする
+        # これにより、玄関で得たCookieを維持したまま、フレームを破壊して進む
+        log(f"破壊的遷移: {DIRECT_LOGIN_JSP} へ直行...")
+        driver.get(DIRECT_LOGIN_JSP)
         time.sleep(15) 
 
         log(f"DEBUG: 現在のURL: {driver.current_url}")
         log(f"DEBUG: ページタイトル: '{driver.title}'")
 
-        # もしこれでおわびが消えれば、ID/PASS入力画面がフレーム内に出現します
-        if "おわび" not in driver.title:
-            log("🎉 突破成功！ログインフォームを探します。")
-            # --- ログインフォーム入力ロジック ---
-            # フレームを再帰的に探して ID/PASS を入れる
-            def fill_login(d):
-                pws = d.find_elements(By.XPATH, "//input[@type='password']")
-                if pws:
-                    log("⌨️ パスワード欄を発見。入力します。")
-                    uids = d.find_elements(By.XPATH, "//input[contains(@name, 'uid')]")
-                    if uids: uids[0].send_keys(os.environ.get("JKK_ID"))
-                    pws[0].send_keys(os.environ.get("JKK_PASSWORD"))
-                    pws[0].submit()
-                    return True
-                
-                fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
-                for i in range(len(fms)):
-                    try:
-                        d.switch_to.frame(i)
-                        if fill_login(d): return True
-                        d.switch_to.parent_frame()
-                    except: continue
-                return False
+        # 3. フォームがあるか全フレームから徹底捜索
+        def find_and_fill(d):
+            # ID/PASS入力欄の典型的なname属性などを狙う
+            u_tags = d.find_elements(By.NAME, "uid") + d.find_elements(By.ID, "uid")
+            p_tags = d.find_elements(By.XPATH, "//input[@type='password']")
             
-            fill_login(driver)
-            time.sleep(5)
-            log(f"✅ ログイン後のURL: {driver.current_url}")
-        else:
-            log("🚨 まだおわび画面です。別窓ではなくURL直行を試します。")
-            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
+            if u_tags and p_tags:
+                log("🎯 ログインフォームを発見！")
+                u_tags[0].send_keys(os.environ.get("JKK_ID"))
+                p_tags[0].send_keys(os.environ.get("JKK_PASSWORD"))
+                # 送信ボタンも探してクリック
+                btns = d.find_elements(By.XPATH, "//img[contains(@src, 'login')] | //input[@type='submit']")
+                if btns: btns[0].click()
+                else: p_tags[0].submit()
+                return True
+            
+            # 再帰的にフレームへ
+            fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
+            for i in range(len(fms)):
+                try:
+                    d.switch_to.frame(i)
+                    if find_and_fill(d): return True
+                    d.switch_to.parent_frame()
+                except: continue
+            return False
+
+        if find_and_fill(driver):
+            log("✅ ログイン情報を送信しました！")
             time.sleep(10)
+            log(f"送信後のURL: {driver.current_url}")
+        else:
+            log("🚨 フォームが見つかりません。")
+            # 最後の手段：ページ全体に何が書かれているか出力（デバッグ）
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            log(f"ページ内容の一部: {body_text[:200]}")
 
     except Exception as e:
         log(f"❌ エラー: {e}")
