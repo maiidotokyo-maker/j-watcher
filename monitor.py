@@ -13,6 +13,8 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
+# ログイン画面の本体（JSP）
+LOGIN_TARGET = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 
 def setup_driver():
     options = Options()
@@ -29,65 +31,58 @@ def main():
     try:
         driver = setup_driver()
         
-        log("🚪 玄関ページにアクセス...")
+        log("🚪 玄関ページにアクセスしてCookieを確保...")
         driver.get(START_URL)
-        time.sleep(10)
+        time.sleep(8)
         
-        # --- レトロサイト攻略の「核」：ウィンドウ名の偽装 ---
-        log("💉 ウィンドウ名を固定し、window.open をカレント遷移にフックします...")
-        driver.execute_script("""
-            // ウィンドウ自体に名前を付ける（これがレトロサイトのチェック対象）
-            window.name = "JKKNET_WINDOW"; 
-            
-            // window.openが呼ばれたら、今の画面で開きつつ、名前を維持する
-            window.open = function(url, name, features) {
-                console.log('Opening: ' + url + ' with name: ' + name);
-                if(name) window.name = name; 
-                window.location.href = url;
-                return window;
-            };
+        # --- レトロサイト攻略：箱庭（Frameset）の構築 ---
+        log("🏗️ 仮想Framesetを構築し、名前付きフレームにログイン画面を召喚します...")
+        driver.execute_script(f"""
+            document.open();
+            document.write('<html><head><title>JKK_REPRO</title></head>');
+            document.write('<frameset rows="*">');
+            document.write('<frame name="main" id="main" src="{LOGIN_TARGET}">');
+            document.write('</frameset></html>');
+            document.close();
         """)
         
-        log("🖱️ ログイン関数を実行...")
-        driver.execute_script("if(window.mypageLogin){ mypageLogin(); }")
-        
-        time.sleep(20) # 遷移とJS実行をじっくり待つ
+        # ロードをじっくり待つ
+        time.sleep(15)
 
-        log(f"DEBUG: 現在のURL: {driver.current_url}")
-        log(f"DEBUG: タイトル: {driver.title}")
-        log(f"DEBUG: ウィンドウ名: {driver.execute_script('return window.name;')}")
-
-        # フォーム探索（全フレーム）
-        def find_and_fill(d):
-            # ID/PASSを探す（name='uid'、type='password'）
-            u = d.find_elements(By.NAME, "uid")
-            p = d.find_elements(By.XPATH, "//input[@type='password']")
-            if u and p:
-                log("🎯 ついにログインフォームを捕捉しました！")
-                u[0].send_keys(os.environ.get("JKK_ID"))
-                p[0].send_keys(os.environ.get("JKK_PASSWORD"))
-                btn = d.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')] | //input[@type='submit']")
-                if btn: btn[0].click()
-                else: p[0].submit()
-                return True
+        # 構築したフレーム 'main' に切り替える
+        try:
+            driver.switch_to.frame("main")
+            log(f"🔎 フレーム内 Title: {driver.title}")
             
-            fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
-            for i in range(len(fms)):
-                try:
-                    d.switch_to.frame(i)
-                    if find_and_fill(d): return True
-                    d.switch_to.parent_frame()
-                except: continue
-            return False
+            # ログインフォーム（ID/PASS）を探索
+            u_tags = driver.find_elements(By.NAME, "uid")
+            p_tags = driver.find_elements(By.XPATH, "//input[@type='password']")
+            
+            if u_tags and p_tags:
+                log("🎯 ついにログインフォーム（生身）を捕捉しました！")
+                u_tags[0].send_keys(os.environ.get("JKK_ID"))
+                p_tags[0].send_keys(os.environ.get("JKK_PASSWORD"))
+                
+                # 送信（画像ボタンやsubmitを網羅）
+                btn = driver.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')] | //input[@type='submit']")
+                if btn:
+                    btn[0].click()
+                else:
+                    p_tags[0].submit()
+                
+                log("🚀 ログイン情報を送信。成功を祈ります。")
+                time.sleep(10)
+                log(f"送信後のURL: {driver.current_url}")
+            else:
+                log(f"🚨 フォーム未検出。タイトル: {driver.title}")
+                log("--- フレーム内のソース（冒頭） ---")
+                log(driver.page_source[:500])
 
-        if not find_and_fill(driver):
-            log("🚨 フォーム未検出。おわびが続く場合は、直接URLを叩いて名前を維持します...")
-            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
-            time.sleep(10)
-            find_and_fill(driver)
+        except Exception as fe:
+            log(f"❌ フレーム遷移エラー: {fe}")
 
     except Exception as e:
-        log(f"❌ エラー: {e}")
+        log(f"❌ 致命的エラー: {e}")
     finally:
         if driver: driver.quit()
 
