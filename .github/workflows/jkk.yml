@@ -3,7 +3,7 @@ name: JKK Watcher
 on:
   workflow_dispatch:        # 手動実行用
   schedule:
-    - cron: '*/30 * * * *'  # 30分ごとに自動実行（お好みで調整）
+    - cron: '*/30 * * * *'  # 30分ごとに自動実行
 
 jobs:
   build:
@@ -26,8 +26,7 @@ jobs:
       - name: Run monitor.py
         run: python monitor.py
         env:
-          # GitHub Secrets から値を読み込んで環境変数にセット
+          # Cookieは渡さず、IDとPWのみで正攻法を挑む
           JKK_ID: ${{ secrets.JKK_ID }}
           JKK_PASSWORD: ${{ secrets.JKK_PASSWORD }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          JKK_COOKIE: ${{ secrets.JKK_COOKIE }}  # 👈 これが重要！
