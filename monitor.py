@@ -13,9 +13,8 @@ sys.stdout.reconfigure(encoding='utf-8')
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-# 玄関と、直接叩くべき「中身」のJSP
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
-DIRECT_LOGIN_JSP = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+TARGET_JSP = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 
 def setup_driver():
     options = Options()
@@ -25,66 +24,61 @@ def setup_driver():
     options.add_argument('--window-size=1280,1024')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     options.add_argument('--lang=ja-JP')
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    return driver
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
     driver = None
     try:
         driver = setup_driver()
         
-        # 1. まず玄関へ行き、Cookie（JSESSIONID）を強制的に発行させる
-        log("🚪 玄関ページにアクセス（Cookie取得用）...")
+        log("🚪 玄関ページにアクセス中...")
         driver.get(START_URL)
-        time.sleep(10)
+        time.sleep(5)
         
-        # 2. 「おわび」が出ていても無視して、本丸のURLへ「上書き」アクセスする
-        # これにより、玄関で得たCookieを維持したまま、フレームを破壊して進む
-        log(f"破壊的遷移: {DIRECT_LOGIN_JSP} へ直行...")
-        driver.get(DIRECT_LOGIN_JSP)
-        time.sleep(15) 
-
-        log(f"DEBUG: 現在のURL: {driver.current_url}")
-        log(f"DEBUG: ページタイトル: '{driver.title}'")
-
-        # 3. フォームがあるか全フレームから徹底捜索
-        def find_and_fill(d):
-            # ID/PASS入力欄の典型的なname属性などを狙う
-            u_tags = d.find_elements(By.NAME, "uid") + d.find_elements(By.ID, "uid")
-            p_tags = d.find_elements(By.XPATH, "//input[@type='password']")
+        # --- 魔法の一手：偽装フレーム構築 ---
+        log("🪄 仮想フレームを構築し、中身を直接召喚します...")
+        driver.execute_script(f"""
+            document.body.innerHTML = '<iframe id="retro-frame" src="{TARGET_JSP}" style="width:100%;height:100vh;border:none;"></iframe>';
+        """)
+        
+        time.sleep(15) # 中身のJSPがロードされるのを待つ
+        
+        # フレームの中に潜る
+        try:
+            driver.switch_to.frame("retro-frame")
+            log(f"🔎 フレーム内部のURL: {driver.current_url}")
+            
+            # フォームを探索
+            u_tags = driver.find_elements(By.NAME, "uid")
+            p_tags = driver.find_elements(By.XPATH, "//input[@type='password']")
             
             if u_tags and p_tags:
-                log("🎯 ログインフォームを発見！")
+                log("🎯 ついに生身のログインフォームを捕捉しました！")
                 u_tags[0].send_keys(os.environ.get("JKK_ID"))
                 p_tags[0].send_keys(os.environ.get("JKK_PASSWORD"))
-                # 送信ボタンも探してクリック
-                btns = d.find_elements(By.XPATH, "//img[contains(@src, 'login')] | //input[@type='submit']")
-                if btns: btns[0].click()
-                else: p_tags[0].submit()
-                return True
-            
-            # 再帰的にフレームへ
-            fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
-            for i in range(len(fms)):
-                try:
-                    d.switch_to.frame(i)
-                    if find_and_fill(d): return True
-                    d.switch_to.parent_frame()
-                except: continue
-            return False
-
-        if find_and_fill(driver):
-            log("✅ ログイン情報を送信しました！")
-            time.sleep(10)
-            log(f"送信後のURL: {driver.current_url}")
-        else:
-            log("🚨 フォームが見つかりません。")
-            # 最後の手段：ページ全体に何が書かれているか出力（デバッグ）
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            log(f"ページ内容の一部: {body_text[:200]}")
+                
+                # 送信ボタンをクリック
+                btn = driver.find_element(By.XPATH, "//img[contains(@src, 'login')] | //input[@type='submit']")
+                btn.click()
+                
+                log("🚀 ログイン情報を送信。成功を祈ります...")
+                time.sleep(10)
+                driver.switch_to.default_content() # 元に戻る
+                log(f"最終到達URL: {driver.current_url}")
+                
+            else:
+                log("🚨 フレーム内にもフォームがありません。おわびが継続しています。")
+                log(f"フレーム内Title: {driver.title}")
+                # 最終デバッグ：全ソース
+                log("--- SOURCE START ---")
+                log(driver.page_source[:1000])
+                log("--- SOURCE END ---")
+                
+        except Exception as fe:
+            log(f"❌ フレーム操作エラー: {fe}")
 
     except Exception as e:
-        log(f"❌ エラー: {e}")
+        log(f"❌ 致命的エラー: {e}")
     finally:
         if driver: driver.quit()
 
