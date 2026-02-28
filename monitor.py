@@ -193,4 +193,11 @@ def main():
                 print("🚨 【空室あり】世田谷区に空室が見つかりました！", flush=True)
                 if DISCORD_WEBHOOK_URL:
                     requests.post(DISCORD_WEBHOOK_URL, json={
-                        "content": f"🏠 **JKK世田谷区：空室あり！**\n{datetime.now().strftime('%Y/%m/%d %H:%M:%S')} に検出されました！\nhttps://jhomes.to-kous
+                        "content": (
+                            f"🏠 **JKK世田谷区：空室あり！**\n"
+                            f"{datetime.now().strftime('%Y/%m/%d %H:%M:%S')} に検出されました！\n"
+                            "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
+                        )
+                    })
+            else:
+                print("👀 現在、
