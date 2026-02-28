@@ -12,59 +12,58 @@ sys.stdout.reconfigure(encoding='utf-8')
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-def find_button_recursive(driver):
-    # 今いる階層でボタンを探す
-    btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]|//a[contains(@onclick, 'mypageLogin')]")
-    if btns:
-        return btns[0]
-    
-    # 子フレームを順番に潜って探す
-    frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
-    for i in range(len(frames)):
-        try:
-            driver.switch_to.frame(i)
-            found = find_button_recursive(driver)
-            if found: return found
-            driver.switch_to.parent_frame()
-        except:
-            continue
-    return None
-
 def main():
     options = Options()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
+    # 日本語環境であることをサーバーに伝える（これだけで通るレトロサイトは多い）
+    options.add_argument('--lang=ja-JP')
+    
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
         log("🚪 玄関ページにアクセス")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
-        time.sleep(5)
+        
+        # レトロサイトは読み込みが遅い。物理的に10秒待つ。
+        time.sleep(10)
 
-        # フレームを潜り倒してボタンを探す
-        btn = find_button_recursive(driver)
-
-        if btn:
-            log("🎯 ボタン発見、クリックします")
-            btn.click()
-            time.sleep(10)
-            
-            # 別窓へ移動
-            if len(driver.window_handles) > 1:
-                driver.switch_to.window(driver.window_handles[-1])
-            
-            log(f"📄 到着: {driver.title}")
-
-            # ログイン入力
-            u = driver.find_elements(By.NAME, "uid")
-            if u:
-                u[0].send_keys(os.environ.get("JKK_ID"))
-                driver.find_element(By.NAME, "passwd").send_keys(os.environ.get("JKK_PASSWORD"))
-                driver.find_element(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]").click()
-                time.sleep(5)
-                log(f"✅ ログイン後のURL: {driver.current_url}")
+        # フレーム構造を無視して、ページ全体の「文字」でボタンを探す力技
+        log("🔍 ページ内の『ログイン』という文字を全探索...")
+        
+        # すべてのフレームをチェック
+        all_frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        
+        target_frame = None
+        if not all_frames:
+            log("📄 フレームなし。直接探します。")
         else:
-            log("🚨 迷宮の奥底にもボタンがありませんでした")
+            for i in range(len(all_frames)):
+                driver.switch_to.frame(i)
+                if "ログイン" in driver.page_source:
+                    log(f"🎯 第{i}フレームにログインの気配あり")
+                    target_frame = i
+                    break
+                driver.switch_to.default_content()
+
+        # ボタン（またはリンク）を特定してクリック
+        try:
+            # 「mypageLogin」という文字が含まれる要素を強引に叩く
+            btn = driver.find_element(By.XPATH, "//*[@onclick*='mypageLogin']|//*[contains(@src, 'login')]")
+            log("🖱️ ボタンを叩きます")
+            driver.execute_script("arguments[0].click();", btn)
+        except:
+            log("🚨 物理ボタン不能。直接URLへジャンプを試みます。")
+            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
+
+        time.sleep(10)
+        
+        # 最終確認
+        log(f"📄 現在のTitle: {driver.title}")
+        if "おわび" in driver.title:
+            log("💀 サーバーに拒絶されました（IP制限等の可能性あり）")
+        else:
+            log(f"✅ 突破の可能性あり: {driver.current_url}")
 
     finally:
         driver.quit()
