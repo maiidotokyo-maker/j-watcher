@@ -19,34 +19,48 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        # 1. 玄関へ
-        log("🚪 アクセス開始")
+        log("🚪 玄関ページにアクセス")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
         time.sleep(5)
 
-        # 2. ログインボタンを普通にクリック
-        log("🖱️ ログインボタンをクリック")
-        btn = driver.find_element(By.XPATH, "//img[contains(@src, 'btn_login')]|//a[contains(@onclick, 'mypageLogin')]")
-        btn.click()
-        time.sleep(10)
+        # フレーム（窓枠）が複数ある可能性があるので、全部順番にチェックする
+        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        btn = None
 
-        # 3. 窓が分かれたら切り替える（これだけ！）
-        if len(driver.window_handles) > 1:
-            driver.switch_to.window(driver.window_handles[-1])
-        
-        log(f"📄 現在のページ: {driver.title}")
-
-        # 4. フォーム入力（あれば入力、なければ終了）
-        u = driver.find_elements(By.NAME, "uid")
-        if u:
-            log("🎯 フォーム発見")
-            u[0].send_keys(os.environ.get("JKK_ID"))
-            driver.find_element(By.XPATH, "//input[@type='password']").send_keys(os.environ.get("JKK_PASSWORD"))
-            driver.find_element(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]").click()
-            time.sleep(5)
-            log(f"✅ 完了URL: {driver.current_url}")
+        if not frames:
+            # フレームがなければ直接探す
+            btn = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]|//a[contains(@onclick, 'mypageLogin')]")
         else:
-            log("🚨 フォームなし（おわび等）")
+            # フレームを1つずつ覗いてボタンを探す
+            for i in range(len(frames)):
+                driver.switch_to.frame(i)
+                btn = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]|//a[contains(@onclick, 'mypageLogin')]")
+                if btn:
+                    log(f"🎯 第{i}フレームでボタンを発見")
+                    break
+                driver.switch_to.default_content()
+
+        if btn:
+            btn[0].click()
+            time.sleep(10)
+            
+            # 別窓が開いたらそっちに移動
+            if len(driver.window_handles) > 1:
+                driver.switch_to.window(driver.window_handles[-1])
+            
+            log(f"📄 現在のページ: {driver.title}")
+            
+            # ログイン入力（ここもシンプルに）
+            u = driver.find_elements(By.NAME, "uid")
+            if u:
+                log("🎯 入力開始")
+                u[0].send_keys(os.environ.get("JKK_ID"))
+                driver.find_element(By.NAME, "passwd").send_keys(os.environ.get("JKK_PASSWORD"))
+                driver.find_element(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]").click()
+                time.sleep(5)
+                log(f"✅ 到達URL: {driver.current_url}")
+        else:
+            log("🚨 ログインボタンがどこにも見つかりません")
 
     finally:
         driver.quit()
