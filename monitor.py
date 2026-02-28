@@ -20,125 +20,83 @@ def setup_driver():
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36')
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
+def find_and_fill_recursive(driver, jkk_id, jkk_pass):
+    """
+    今いる階層および、すべてのサブフレームの中から入力欄を探して入力する（再帰関数）
+    """
+    try:
+        # 1. 今の階層で探す
+        uids = driver.find_elements(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user') or contains(@id, 'user')]")
+        pws = driver.find_elements(By.XPATH, "//input[@type='password']")
+        
+        if uids and pws:
+            uids[0].send_keys(jkk_id)
+            pws[0].send_keys(jkk_pass)
+            pws[0].submit()
+            return True
+        
+        # 2. 子フレームを順番に潜って探す
+        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        for i in range(len(frames)):
+            # indexで指定しないと、切り替え後に要素が失効するため
+            driver.switch_to.frame(i)
+            if find_and_fill_recursive(driver, jkk_id, jkk_pass):
+                return True
+            driver.switch_to.parent_frame() # 一つ上の階層に戻る
+            
+    except Exception:
+        pass
+    return False
+
 def login_and_check(driver):
     print(f"🏁 玄関ページへアクセス: {START_URL}")
     driver.get(START_URL)
-    time.sleep(8) # セッションCookieをもらうために長めに待機
+    time.sleep(5)
 
-    # 1. ログイン画面への遷移（Noneエラー対策版）
-    print("🖱️ ログイン画面へ進みます...")
-    try:
-        clicked = False
-        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
-        
-        # ボタンを探してクリックする関数（安全設計）
-        def try_click_login():
-            elements = driver.find_elements(By.XPATH, "//a | //img | //input")
-            for el in elements:
-                text = el.text or ""
-                src = el.get_attribute('src') or ""
-                href = el.get_attribute('href') or ""
-                if 'ログイン' in text or 'login' in src.lower() or 'login' in href.lower() or 'mypage' in href.lower():
-                    el.click()
-                    return True
-            return False
-
-        # メイン画面を探す
-        if try_click_login():
-            clicked = True
-            print("✅ メイン画面でログインボタンをクリックしました！")
-        else:
-            # フレームの中を探す
-            for i, frame in enumerate(frames):
-                driver.switch_to.frame(frame)
-                if try_click_login():
-                    clicked = True
-                    print(f"✅ フレーム[{i}]の中でログインボタンをクリックしました！")
-                    driver.switch_to.default_content()
-                    break
-                driver.switch_to.default_content()
-
-        if not clicked:
-            print("⚠️ ボタンが見つからないため、セッションを保持したまま直接ログインURLへ移動します。")
-            # 玄関を踏んでCookieを持っているので、直接移動しても弾かれないはず
-            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
-            
-    except Exception as e:
-        print(f"❌ ボタン検索中に予期せぬエラー: {e}")
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
-
+    print("🖱️ ログインページへ移動中...")
+    # セッション維持のため直接ジャンプ
+    driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
     time.sleep(10)
 
-    # 2. ログインフォームを探して入力（対フレームセット兵器）
-    print("⌨️ ログインフォームを探しています...")
-    logged_in = False
-    
-    # メインのHTML内をチェック
-    try:
-        uid_input = driver.find_element(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user') or contains(@id, 'user')]")
-        pw_input = driver.find_element(By.XPATH, "//input[@type='password']")
-        uid_input.send_keys(JKK_ID)
-        pw_input.send_keys(JKK_PASS)
-        pw_input.submit()
-        print("✅ メイン画面でログイン情報を送信しました！")
-        logged_in = True
-    except:
-        # メインになければ、フレームの中を一つずつ覗き込む
-        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
-        for i, frame in enumerate(frames):
-            try:
-                driver.switch_to.frame(frame)
-                uid_input = driver.find_element(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user') or contains(@id, 'user')]")
-                pw_input = driver.find_element(By.XPATH, "//input[@type='password']")
-                
-                uid_input.send_keys(JKK_ID)
-                pw_input.send_keys(JKK_PASS)
-                pw_input.submit()
-                print(f"✅ フレーム[{i}]の中でログイン情報を送信しました！")
-                logged_in = True
-                driver.switch_to.default_content()
-                break
-            except:
-                driver.switch_to.default_content()
-
-    if not logged_in:
-        print("❌ どうしても入力フォームが見つかりませんでした。")
-        driver.save_screenshot("login_form_missing.png")
+    # 1. 全フレームをしらみつぶしに探して入力
+    print("⌨️ 全フレームを再帰的に探索してID/PASSを入力中...")
+    if find_and_fill_recursive(driver, JKK_ID, JKK_PASS):
+        print("✅ ログイン情報の送信に成功しました！")
+    else:
+        print("❌ どのフレームにも入力欄が見つかりませんでした。")
+        driver.save_screenshot("all_frames_failed.png")
         return False
 
-    # 3. ログイン結果の確認
-    print("⏳ ログイン処理中...")
+    # 2. ログイン結果の確認
+    print("⏳ 処理待ち...")
     time.sleep(15)
     
-    driver.save_screenshot("login_result.png")
-    body_text = driver.find_element(By.TAG_NAME, "body").text
-    
-    if "ログアウト" in body_text or "空室" in body_text or "退去" in body_text or "メニュー" in body_text:
+    # 全フレームのテキストを結合して「成功」の文字を探す
+    def check_text_recursive(driver):
+        txt = driver.find_element(By.TAG_NAME, "body").text
+        if any(k in txt for k in ["ログアウト", "空室", "メニュー", "マイページ"]):
+            return True
+        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        for i in range(len(frames)):
+            driver.switch_to.frame(i)
+            if check_text_recursive(driver): return True
+            driver.switch_to.parent_frame()
+        return False
+
+    if check_text_recursive(driver):
+        print("🚨 ログイン突破成功！！！")
+        driver.save_screenshot("login_success.png")
         return True
     
-    # 別フレームに結果が出ているかもしれないので確認
-    frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
-    for frame in frames:
-        try:
-            driver.switch_to.frame(frame)
-            text = driver.find_element(By.TAG_NAME, "body").text
-            if "ログアウト" in text or "空室" in text or "退去" in text or "メニュー" in text:
-                driver.switch_to.default_content()
-                return True
-            driver.switch_to.default_content()
-        except:
-            driver.switch_to.default_content()
-
-    print("❌ ログイン成功を証明するテキストが見つかりません。")
+    print("❌ ログイン後の画面を確認できませんでした。")
+    driver.save_screenshot("after_submit_failed.png")
     return False
 
 def main():
     driver = setup_driver()
     try:
         if login_and_check(driver):
-            print("🚨 ログイン突破成功！！！")
-        else:
-            print("👀 ログイン突破ならず...")
+            print("🚀 次のステップ：エリア選択とスキャンの実装へ進めます")
     except Exception as e:
         print(f"❌ 実行エラー: {e}")
     finally:
