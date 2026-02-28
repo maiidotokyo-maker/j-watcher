@@ -1,10 +1,118 @@
+import os, time, requests
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
+
+# --- 設定 ---
+START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
+LOGIN_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+AREA_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/vacancy/area"
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+JKK_ID = os.environ.get("JKK_ID", "").strip()
+JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()
+
+def setup_driver():
+    options = Options()
+    options.add_argument('--headless=new')
+    options.add_argument('--window-size=1280,1024')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36')
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+def wait_for_login_form(driver, timeout=30):
+    print("⏳ ログインフォームの出現を待機中...")
+    wait = WebDriverWait(driver, timeout)
+    try:
+        wait.until(lambda d: d.find_element(By.XPATH, "//input[@type='password']"))
+        print("✅ ログインフォームを検出しました。")
+        return True
+    except:
+        print("❌ ログインフォームが表示されませんでした。")
+        driver.save_screenshot("login_form_not_found.png")
+        return False
+
+def find_and_fill_recursive(driver, jkk_id, jkk_pass):
+    try:
+        uids = driver.find_elements(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user') or contains(@id, 'Id')]")
+        pws = driver.find_elements(By.XPATH, "//input[@type='password']")
+        if uids and pws:
+            uids[0].clear()
+            uids[0].send_keys(jkk_id)
+            pws[0].clear()
+            pws[0].send_keys(jkk_pass)
+            btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'login')] | //input[@type='image'] | //input[@type='submit'] | //button")
+            if btns:
+                btns[0].click()
+            else:
+                pws[0].send_keys(Keys.RETURN)
+            return True
+        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        for i in range(len(frames)):
+            driver.switch_to.frame(i)
+            if find_and_fill_recursive(driver, jkk_id, jkk_pass):
+                return True
+            driver.switch_to.parent_frame()
+    except Exception:
+        pass
+    return False
+
+def check_text_recursive(driver):
+    try:
+        txt = driver.find_element(By.TAG_NAME, "body").text
+        if any(k in txt for k in ["ログアウト", "空室", "メニュー", "マイページ"]):
+            return True
+        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        for i in range(len(frames)):
+            driver.switch_to.frame(i)
+            if check_text_recursive(driver): return True
+            driver.switch_to.parent_frame()
+    except Exception:
+        pass
+    return False
+
+def login_and_check(driver):
+    print(f"🏁 玄関ページへアクセス: {START_URL}")
+    driver.get(START_URL)
+    time.sleep(5)
+
+    print("🖱️ ログインページへ移動中...")
+    driver.get(LOGIN_URL)
+
+    if not wait_for_login_form(driver):
+        return False
+
+    print("⌨️ 全フレームを再帰的に探索してID/PASSを入力中...")
+    if find_and_fill_recursive(driver, JKK_ID, JKK_PASS):
+        print("✅ ログイン情報の送信に成功しました！")
+    else:
+        print("❌ どのフレームにも入力欄が見つかりませんでした。")
+        driver.save_screenshot("all_frames_failed.png")
+        return False
+
+    print("⏳ 処理待ち...")
+    time.sleep(15)
+
+    if check_text_recursive(driver):
+        print("🚨 ログイン突破成功！！！")
+        driver.save_screenshot("login_success.png")
+        return True
+
+    print("❌ ログイン後の画面を確認できませんでした。")
+    driver.save_screenshot("after_submit_failed.png")
+    return False
+
 def select_area_and_scan(driver):
     print("📍 エリア選択画面へ移動します...")
-    # 直接エリア選択のURLを叩く（ログインセッションが維持されていれば可能）
-    driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/vacancy/area")
+    driver.get(AREA_URL)
     time.sleep(8)
 
-    # 1. 世田谷区のチェックボックス(113)を選択して検索実行
     print("🎯 世田谷区を選択中...")
     selected = driver.execute_script("""
         function selectRecursive(w) {
@@ -12,7 +120,6 @@ def select_area_and_scan(driver):
                 let cb = w.document.querySelector("input[value='113']");
                 if (cb) {
                     cb.click();
-                    // 検索実行ボタン（画像またはJS関数）
                     let btn = w.document.querySelector('img[src*="search"], a[onclick*="doSearch"]');
                     if (btn) btn.click(); else if (w.doSearch) w.doSearch();
                     return true;
@@ -34,12 +141,9 @@ def select_area_and_scan(driver):
     print("🔎 空室状況をスキャン中...")
     time.sleep(10)
 
-    # 2. 別窓が開いた場合のハンドリング
     if len(driver.window_handles) > 1:
         driver.switch_to.window(driver.window_handles[-1])
 
-    # 3. 「空室」を意味するキーワードがあるか全フレームから探す
-    # (JKKは空室がある場合、間取り[DK, LDK]や「詳細」ボタンが出現する)
     found = driver.execute_script("""
         function scanRecursive(w) {
             try {
@@ -56,7 +160,6 @@ def select_area_and_scan(driver):
     """)
     return found
 
-# --- main関数の修正案 ---
 def main():
     driver = setup_driver()
     try:
@@ -66,7 +169,7 @@ def main():
                 print("🚨 【空室あり】世田谷区に空室が見つかりました！")
                 if DISCORD_WEBHOOK_URL:
                     requests.post(DISCORD_WEBHOOK_URL, json={
-                        "content": "🏠 **JKK世田谷区：空室あり！**\n今すぐ確認してください！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/"
+                        "content": f"🏠 **JKK世田谷区：空室あり！**\n{datetime.now().strftime('%Y/%m/%d %H:%M:%S')} に検出されました！\nhttps://jhomes.to-kousya.or.jp/search/jkknet/pc/"
                     })
             else:
                 print("👀 現在、世田谷区に空室はありません。")
@@ -74,3 +177,6 @@ def main():
         print(f"❌ 実行エラー: {e}")
     finally:
         driver.quit()
+
+if __name__ == "__main__":
+    main()
