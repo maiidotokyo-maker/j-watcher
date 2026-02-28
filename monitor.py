@@ -17,109 +17,96 @@ def log(msg):
 
 def notify_discord(message):
     url = os.environ.get("DISCORD_WEBHOOK_URL")
-    if url:
+    if url and "✅" in message:
         try:
             requests.post(url, json={"content": message}, timeout=10)
             log("📢 Discord通知を送信しました。")
-        except Exception as e:
-            log(f"⚠️ Discord通知失敗: {e}")
-
-def try_login(driver):
-    u_fields = driver.find_elements(By.NAME, "uid")
-    p_fields = driver.find_elements(By.NAME, "passwd")
-    if u_fields and p_fields:
-        log("🔑 フォームを発見。入力を開始します。")
-        u_fields[0].send_keys(os.environ.get("JKK_ID"))
-        p_fields[0].send_keys(os.environ.get("JKK_PASSWORD"))
-        time.sleep(1)
-        p_fields[0].send_keys(Keys.ENTER)
-        return True
-    return False
+        except:
+            pass
 
 def main():
     options = Options()
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1280,1024')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        log("🚪 手順1: 玄関(TOP)にアクセス")
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
+        # 手順1: サイトのルートから入る（リファラ対策）
+        log("🚪 手順1: 公社サイトのルートにアクセス")
+        driver.get("https://www.to-kousya.or.jp/")
+        time.sleep(3)
+
+        # 手順2: ログインページへ（直接移動ではなく、遷移を意識）
+        log("🚪 手順2: ログインページへ移動")
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
         time.sleep(5)
 
-        log("🔍 手順2: ログインボタンを探索")
-        found_btn = None
-        xpath_list = [
-            "//a[contains(@onclick, 'mypageLogin')]",
-            "//area[contains(@onclick, 'mypageLogin')]",
-            "//img[contains(@src, 'login')]/..",
-            "//a[contains(text(), 'ログイン')]"
-        ]
+        # ページ内にフレームがあるか確認し、あれば中に入る
+        frames = driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
+        if frames:
+            log(f"📦 {len(frames)}個のフレームを検知。最初のフレームに切り替えます。")
+            driver.switch_to.frame(0)
+
+        # 手順3: 入力欄の特定と入力（ここを強化！）
+        log("🔍 手順3: IDとPWの入力欄を厳密に特定します")
         
-        for xpath in xpath_list:
-            btns = driver.find_elements(By.XPATH, xpath)
-            if btns:
-                found_btn = btns[0]
-                break
+        # ID欄の特定 (name='uid' または type='text')
+        id_field = driver.find_element(By.NAME, "uid")
+        # PW欄の特定 (name='passwd' または type='password')
+        pw_field = driver.find_element(By.NAME, "passwd")
 
-        if found_btn:
-            log("👉 ボタンをクリックしてログインページへ遷移します")
-            driver.execute_script("arguments[0].scrollIntoView(true);", found_btn)
-            driver.execute_script("arguments[0].click();", found_btn)
-            time.sleep(5)
-        else:
-            log("🚨 ログインボタンが見つかりませんでした。スクショを保存します。")
-            driver.save_screenshot("no_login_button.png")
-            return
-
-        if len(driver.window_handles) > 1:
-            driver.switch_to.window(driver.window_handles[-1])
-            log(f"📑 新しい窓に切り替えました: {driver.current_url}")
-
-        log("🔍 手順3: ログインフォームを確認します")
-        success = False
-        if try_login(driver):
-            success = True
-        else:
-            frames = driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
-            for i in range(len(frames)):
-                driver.switch_to.frame(i)
-                if try_login(driver):
-                    log(f"🎯 第{i}フレームでフォームを発見")
-                    success = True
-                    break
-                driver.switch_to.default_content()
-
-        if success:
-            log("⏳ ログイン処理の完了を待機（10秒）...")
+        if id_field and pw_field:
+            # 1. 念のため既存の文字を全削除
+            id_field.clear()
+            pw_field.clear()
+            
+            # 2. 値の投入（ Secrets から正確に取得）
+            jkk_id = os.environ.get("JKK_ID")
+            jkk_pw = os.environ.get("JKK_PASSWORD")
+            
+            log(f"⌨️ ID欄に入力します（長さ: {len(jkk_id)}文字）")
+            id_field.send_keys(jkk_id)
+            
+            log(f"⌨️ PW欄に入力します（長さ: {len(jkk_pw)}文字）")
+            pw_field.send_keys(jkk_pw)
+            
+            time.sleep(1)
+            
+            # 3. Enterではなく「ログイン」ボタンを明示的に探してクリックしてみる
+            log("🖱️ ログイン実行ボタンを探索中...")
+            login_btn = driver.find_elements(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]|//input[@type='submit']")
+            
+            if login_btn:
+                log("🎯 実行ボタンをクリックします")
+                driver.execute_script("arguments[0].click();", login_btn[0])
+            else:
+                log("⌨️ ボタンが見つからないためEnterキーで代用します")
+                pw_field.send_keys(Keys.ENTER)
+            
             time.sleep(10)
             
-            # 【重要】成功・失敗に関わらず、解析のためにHTMLを保存
-            page_filename = "after_login.html" if "マイページ" in driver.title or "ログアウト" in driver.page_source else "failed_page.html"
-            with open(page_filename, "w", encoding="utf-8") as f:
+            # 最終確認
+            log(f"✅ 遷移後のタイトル: {driver.title}")
+            with open("after_action.html", "w", encoding="utf-8") as f:
                 f.write(driver.page_source)
-            log(f"💾 ページソースを {page_filename} に保存しました。")
 
             if "マイページ" in driver.title or "ログアウト" in driver.page_source:
-                log("🎉 ログイン成功！")
-                notify_discord(f"✅ JKKログイン成功！\nURL: {driver.current_url}")
+                log("🎉 成功！")
+                notify_discord("✅ JKKログイン成功！")
             else:
-                log(f"💀 ログイン失敗。タイトル: {driver.title}")
-                driver.save_screenshot("login_failed.png")
+                log("💀 ログインできませんでした。入力ミスか、ページが弾かれています。")
+                driver.save_screenshot("input_check.png")
         else:
-            log("🚨 フォームが見つかりませんでした（くじらページ等の可能性）")
-            driver.save_screenshot("no_form.png")
+            log("🚨 入力欄が見つかりません。")
 
     except Exception as e:
         log(f"❌ エラー: {e}")
-        driver.save_screenshot("error.png")
+        driver.save_screenshot("fatal_error.png")
     finally:
         driver.quit()
-        log("🏁 終了")
 
 if __name__ == "__main__":
     main()
