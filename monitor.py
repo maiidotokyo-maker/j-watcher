@@ -27,27 +27,18 @@ def main():
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
         time.sleep(3)
         
-        log("🔧 別窓で開く処理を強制的に『同じ画面で開く』ように書き換えます")
-        # サイトの window.open を上書きして、現在のタブで強引に遷移させる
-        driver.execute_script("""
-            window.open = function(url, name, features) {
-                window.location.href = url || '/search/jkknet/pc/mypageLogin';
-                return null;
-            };
-        """)
-        
-        log("🖱️ ログイン処理を発動")
-        # ここで関数を呼ぶと、別窓ではなく今の画面のままログインページへ飛ぶ
-        driver.execute_script("if(typeof mypageLogin === 'function') { mypageLogin(); } else { window.location.href = '/search/jkknet/pc/mypageLogin'; }")
-        
+        log("🔧 直接ログインURLへ遷移します...")
+        # 余計なJSフックをやめ、URL直接叩きに変更
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
         time.sleep(5)
-        log(f"📄 現在のURL: {driver.current_url}")
         
-        # フォームを探す（フレームの中に隠れている場合も想定）
+        log(f"📄 現在のURL: {driver.current_url}")
+        log(f"📄 タイトル: {driver.title}")
+        
         u = driver.find_elements(By.NAME, "uid")
         
         if not u:
-            # フレームがあれば全部順番に覗き込む
+            # フレーム探索
             frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
             for i in range(len(frames)):
                 driver.switch_to.frame(i)
@@ -63,18 +54,16 @@ def main():
             driver.find_element(By.NAME, "passwd").send_keys(os.environ.get("JKK_PASSWORD"))
             
             btn = driver.find_elements(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]")
-            if btn:
-                btn[0].click()
-            else:
-                driver.find_element(By.NAME, "passwd").submit()
+            if btn: btn[0].click()
+            else: driver.find_element(By.NAME, "passwd").submit()
             
             time.sleep(8)
             log(f"✅ ログイン完了後のURL: {driver.current_url}")
-            log(f"📄 最終タイトル: {driver.title}")
         else:
-            log("🚨 フォームが見つかりませんでした。画面に表示されている文字を抽出します:")
-            # なぜ失敗したか（おわびなのか、別エラーなのか）をログに出す
-            log(driver.find_element(By.TAG_NAME, "body").text[:200])
+            log("🚨 フォームが見つかりません。サーバーが返した【生のHTML】をすべて表示します:")
+            log("================= HTML START =================")
+            log(driver.page_source)
+            log("================= HTML END ===================")
 
     except Exception as e:
         log(f"❌ エラー: {e}")
