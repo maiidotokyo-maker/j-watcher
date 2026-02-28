@@ -12,8 +12,8 @@ sys.stdout.reconfigure(encoding='utf-8')
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
+# 玄関URL
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
-TARGET_JSP = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 
 def setup_driver():
     options = Options()
@@ -21,8 +21,9 @@ def setup_driver():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1280,1024')
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+    # 言語設定を「日本語」に固定（Shift-JISサイトには必須）
     options.add_argument('--lang=ja-JP')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
@@ -30,60 +31,52 @@ def main():
     try:
         driver = setup_driver()
         
-        # 1. まず普通にアクセスして、クッキーを拾う
-        log("🚪 セッション初期化中...")
+        log("🚪 玄関ページへ正規アクセス...")
         driver.get(START_URL)
-        time.sleep(5)
+        time.sleep(10) # 完全に読み込みが終わるまで待つ
         
-        # 2. 【最重要】レトロサイトが期待する「フレーム名」を強制的に作り出す
-        # JKKがよく使う 'main', 'contents', 'menu' といった名前を網羅したダミーを作る
-        log("🪄 レトロ・フレームセットを仮想構築します...")
-        driver.execute_script(f"""
-            document.write('<html><frameset cols="20%,*">');
-            document.write('<frame name="leftFrame" src="about:blank">');
-            document.write('<frame name="mainFrame" id="mainFrame" src="{TARGET_JSP}">');
-            document.write('</frameset></html>');
-            document.close();
-        """)
+        log("🖱️ サイト内関数 'mypageLogin' を直接呼び出します...")
+        # Seleniumのクリックではなく、ブラウザ内部で定義されているはずの関数を叩く
+        # これにより、サイトが期待する「正しい遷移パラメータ」が生成されます
+        driver.execute_script("if(window.mypageLogin){ mypageLogin(); }")
         
-        # 3. フレームの展開を待つ
-        time.sleep(15)
-        
-        # 4. 構築した 'mainFrame' の中に潜る
-        try:
-            driver.switch_to.frame("mainFrame")
-            log(f"🔎 仮想フレーム内を探索中... Title: {driver.title}")
-            
-            # ログインフォーム（ID/PASS）を探す
-            u_tags = driver.find_elements(By.NAME, "uid")
-            p_tags = driver.find_elements(By.XPATH, "//input[@type='password']")
-            
-            if u_tags and p_tags:
-                log("🎯 ついに、生身のログインフォームを捕捉しました！")
-                u_tags[0].send_keys(os.environ.get("JKK_ID"))
-                p_tags[0].send_keys(os.environ.get("JKK_PASSWORD"))
-                
-                # 画像ボタン等に対応
-                btn = driver.find_element(By.XPATH, "//img[contains(@src, 'login')] | //input[@type='submit'] | //input[@type='image']")
-                btn.click()
-                
-                log("🚀 ログイン情報を送信。成功を祈ります。")
-                time.sleep(10)
-                log(f"最終URL: {driver.current_url}")
-            else:
-                log(f"🚨 フォーム未検出。タイトル: {driver.title}")
-                # おわびが続くなら名前が違う可能性があるため全フレーム名を出力
-                log("--- 現在のフレーム内ソース ---")
-                log(driver.page_source[:500])
+        # 遷移（別窓またはフレーム生成）をじっくり待つ
+        time.sleep(20)
 
-        except Exception as fe:
-            log(f"❌ フレーム遷移エラー: {fe}")
+        # レトロサイト特有の「窓が切り替わったか」のチェック
+        if len(driver.window_handles) > 1:
+            log("🪟 別ウィンドウを検知。切り替えます。")
+            driver.switch_to.window(driver.window_handles[-1])
+
+        log(f"DEBUG: URL={driver.current_url} Title='{driver.title}'")
+
+        def deep_scan(d):
+            # ID/PASS入力欄の探索
+            inputs = d.find_elements(By.NAME, "uid") + d.find_elements(By.XPATH, "//input[@type='password']")
+            if inputs:
+                return True
+            # フレーム探索
+            fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
+            for i in range(len(fms)):
+                try:
+                    d.switch_to.frame(i)
+                    if deep_scan(d): return True
+                    d.switch_to.parent_frame()
+                except: continue
+            return False
+
+        if deep_scan(driver):
+            log("🎯 ログインフォームに到達しました！")
+            # 入力処理...
+        else:
+            log("🚨 依然としてフォームが見つかりません。")
+            # ソースの末尾まで取得できているか確認
+            log(f"ソース末尾: {driver.page_source[-200:]}")
 
     except Exception as e:
-        log(f"❌ 致命的エラー: {e}")
+        log(f"❌ エラー: {e}")
     finally:
         if driver: driver.quit()
-        log("🏁 スクリプトを終了します。")
 
 if __name__ == "__main__":
     main()
