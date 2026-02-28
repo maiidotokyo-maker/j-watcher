@@ -13,6 +13,7 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
+LOGIN_JSP = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 
 def setup_driver():
     options = Options()
@@ -29,73 +30,69 @@ def main():
     try:
         driver = setup_driver()
         
-        log("🚪 玄関ページにアクセス...")
+        # 1. まず玄関でCookieを貰う
+        log("🚪 玄関ページにアクセス中...")
         driver.get(START_URL)
         time.sleep(5)
         
-        # --- 秘奥義：レトロ・ウィンドウ・エミュレーション ---
-        log("💉 ターゲットウィンドウを偽装構築中...")
-        driver.execute_script("""
-            // 1. 自分自身の名前を、JKKが期待する名前に固定
-            window.name = "JKK_WIN"; 
-            
-            // 2. window.open をフックして、別窓ではなく「今の窓」で開かせる
-            // その際、無理やり名前を維持させる
-            window.open = function(url, name, features) {
-                window.name = name || "JKK_WIN";
-                window.location.href = url;
-                return window;
-            };
-        """)
+        # 2. 【秘奥義】JavaScriptで「名前付きの別窓」を無理やり作り出し、そこにログイン画面を召喚する
+        log("🪄 偽装ウィンドウ 'JKK_WIN' を生成してログイン画面を呼び出します...")
+        driver.execute_script(f"window.open('{LOGIN_JSP}', 'JKK_WIN');")
+        time.sleep(5)
         
-        log("🖱️ ログインボタン起動（mypageLogin実行）...")
-        driver.execute_script("if(window.mypageLogin){ mypageLogin(); }")
+        # 3. 生成した 'JKK_WIN' ウィンドウに切り替える
+        handles = driver.window_handles
+        if len(handles) > 1:
+            driver.switch_to.window(handles[1])
+            log(f"🪟 ウィンドウ切り替え成功: {driver.execute_script('return window.name;')}")
         
-        # 遷移とレンダリングを最大30秒待つ
-        log("⏳ ページ生成を待機中（最大30秒）...")
-        for i in range(6):
-            time.sleep(5)
-            log(f"DEBUG: URL={driver.current_url} Title='{driver.title}'")
-            if "おわび" not in driver.title and driver.title != "":
-                break
+        # 4. 読み込みを待機（JSPが名前を検知してフォームを吐き出すのを待つ）
+        log("⏳ フォームの生成を待機（20秒）...")
+        time.sleep(20)
+        
+        log(f"DEBUG: 現在のURL: {driver.current_url}")
+        log(f"DEBUG: ページタイトル: '{driver.title}'")
 
-        # フレームの徹底捜索と入力
-        def search_and_login(d):
-            # ID/PASS入力欄を探す
-            u = d.find_elements(By.NAME, "uid")
-            p = d.find_elements(By.XPATH, "//input[@type='password']")
-            if u and p:
-                log("🎯 ついに生身のフォームを捉えました！")
-                u[0].send_keys(os.environ.get("JKK_ID"))
-                p[0].send_keys(os.environ.get("JKK_PASSWORD"))
-                # 送信ボタン（画像ボタン）をクリック
-                btn = d.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')]")
-                if btn: btn[0].click()
-                else: p[0].submit()
+        def login_process(d):
+            # 全フレーム（Frameset対応）から入力欄を徹底捜索
+            inputs = d.find_elements(By.NAME, "uid")
+            passes = d.find_elements(By.XPATH, "//input[@type='password']")
+            
+            if inputs and passes:
+                log("🎯 ついにログインフォームを捕捉しました！")
+                inputs[0].send_keys(os.environ.get("JKK_ID"))
+                passes[0].send_keys(os.environ.get("JKK_PASSWORD"))
+                
+                # 送信ボタン（画像ボタンかsubmit）
+                btn = d.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')] | //input[@type='submit']")
+                if btn:
+                    btn[0].click()
+                else:
+                    passes[0].submit()
                 return True
             
-            # 子フレームを再帰的に探す
-            fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
-            for i in range(len(fms)):
+            # 再帰的に全フレームを掘る
+            frames = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
+            for i in range(len(frames)):
                 try:
                     d.switch_to.frame(i)
-                    if search_and_login(d): return True
+                    if login_process(d): return True
                     d.switch_to.parent_frame()
                 except: continue
             return False
 
-        if search_and_login(driver):
+        if login_process(driver):
             log("🚀 ログイン情報を送信しました！")
             time.sleep(10)
-            log(f"最終到達URL: {driver.current_url}")
+            log(f"送信後のURL: {driver.current_url}")
+            log(f"送信後のTitle: {driver.title}")
+            # ここで「空室検索」画面へのリンクを探すロジックへ続く...
         else:
-            log("🚨 フォームが見つかりません。")
-            # 最後の悪あがき：ページ全体をキャプチャして内容を確認
-            log(f"最終Title: {driver.title}")
-            log(f"Page Source Preview: {driver.page_source[:500]}")
+            log("🚨 依然としてフォームが見つかりません。")
+            log(f"最終ソースの末尾: {driver.page_source[-300:]}")
 
     except Exception as e:
-        log(f"❌ エラー: {e}")
+        log(f"❌ 致命的エラー: {e}")
     finally:
         if driver: driver.quit()
 
