@@ -51,13 +51,6 @@ def find_and_fill_recursive(driver, jkk_id, jkk_pass, dry_run=False):
         pws = driver.find_elements(By.XPATH, "//input[@type='password']")
         if pws:
             if dry_run:
-                inputs = driver.find_elements(By.TAG_NAME, "input")
-                print(f"🔍 検出された input 要素一覧（{len(inputs)} 件）:", flush=True)
-                for i, el in enumerate(inputs):
-                    try:
-                        print(f"  [{i}] type={el.get_attribute('type')} id='{el.get_attribute('id')}' name='{el.get_attribute('name')}'", flush=True)
-                    except:
-                        pass
                 return True
             uids = driver.find_elements(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user') or contains(@id, 'Id')]")
             if uids:
@@ -200,4 +193,13 @@ def main():
                         )
                     })
             else:
-                print("👀 現在、
+                print("👀 現在、世田谷区に空室はありません。", flush=True)
+    except Exception as e:
+        print(f"❌ 実行中に予期せぬエラーが発生しました: {e}", flush=True)
+    finally:
+        if driver:
+            driver.quit()
+        print("🏁 スクリプトを終了します。", flush=True)
+
+if __name__ == "__main__":
+    main()
