@@ -1,7 +1,6 @@
 import sys
 import os
 import time
-import requests
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -11,18 +10,8 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 sys.stdout.reconfigure(encoding='utf-8')
-
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
-def notify_discord(message):
-    url = os.environ.get("DISCORD_WEBHOOK_URL")
-    if url and "✅" in message:
-        try:
-            requests.post(url, json={"content": message}, timeout=10)
-            log("📢 Discord通知を送信しました。")
-        except:
-            pass
 
 def main():
     options = Options()
@@ -34,77 +23,66 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        # 手順1: サイトのルートから入る（リファラ対策）
-        log("🚪 手順1: 公社サイトのルートにアクセス")
-        driver.get("https://www.to-kousya.or.jp/")
-        time.sleep(3)
-
-        # 手順2: ログインページへ（直接移動ではなく、遷移を意識）
-        log("🚪 手順2: ログインページへ移動")
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
+        # 手順1: ここが生命線。必ず「玄関」から入る。
+        log("🚪 手順1: JKKねっとの玄関ページへアクセス")
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
         time.sleep(5)
 
-        # ページ内にフレームがあるか確認し、あれば中に入る
-        frames = driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
-        if frames:
-            log(f"📦 {len(frames)}個のフレームを検知。最初のフレームに切り替えます。")
-            driver.switch_to.frame(0)
-
-        # 手順3: 入力欄の特定と入力（ここを強化！）
-        log("🔍 手順3: IDとPWの入力欄を厳密に特定します")
+        # 手順2: URL移動せず、ページ内のログインボタンを「クリック」する
+        log("🔍 手順2: ページ内のログインボタンを物理的に探します")
+        # 複数の可能性（aタグ、画像ボタン、onclick属性）を考慮
+        login_btn = None
+        selectors = [
+            "//a[contains(@onclick, 'mypageLogin')]",
+            "//area[contains(@onclick, 'mypageLogin')]",
+            "//img[contains(@src, 'login')]/..",
+            "//a[contains(text(), 'ログイン')]"
+        ]
         
-        # ID欄の特定 (name='uid' または type='text')
-        id_field = driver.find_element(By.NAME, "uid")
-        # PW欄の特定 (name='passwd' または type='password')
-        pw_field = driver.find_element(By.NAME, "passwd")
+        for sel in selectors:
+            elements = driver.find_elements(By.XPATH, sel)
+            if elements:
+                login_btn = elements[0]
+                break
 
-        if id_field and pw_field:
-            # 1. 念のため既存の文字を全削除
-            id_field.clear()
-            pw_field.clear()
+        if login_btn:
+            log("🎯 ボタン発見。物理クリックを実行します（これで『くじら』を回避）")
+            driver.execute_script("arguments[0].click();", login_btn)
+            time.sleep(5)
             
-            # 2. 値の投入（ Secrets から正確に取得）
-            jkk_id = os.environ.get("JKK_ID")
-            jkk_pw = os.environ.get("JKK_PASSWORD")
+            # 別窓が開くタイプの場合、新しい窓に切り替え
+            if len(driver.window_handles) > 1:
+                driver.switch_to.window(driver.window_handles[-1])
+                log(f"📑 ログイン窓に切り替え完了: {driver.current_url}")
             
-            log(f"⌨️ ID欄に入力します（長さ: {len(jkk_id)}文字）")
-            id_field.send_keys(jkk_id)
+            # 手順3: ようやく入力（ここまできたら、くじらはいないはず）
+            log("⌨️ 手順3: IDとPWを投入します")
+            u_field = driver.find_element(By.NAME, "uid")
+            p_field = driver.find_element(By.NAME, "passwd")
             
-            log(f"⌨️ PW欄に入力します（長さ: {len(jkk_pw)}文字）")
-            pw_field.send_keys(jkk_pw)
+            u_field.clear()
+            u_field.send_keys(os.environ.get("JKK_ID"))
+            p_field.clear()
+            p_field.send_keys(os.environ.get("JKK_PASSWORD"), Keys.ENTER)
             
-            time.sleep(1)
-            
-            # 3. Enterではなく「ログイン」ボタンを明示的に探してクリックしてみる
-            log("🖱️ ログイン実行ボタンを探索中...")
-            login_btn = driver.find_elements(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]|//input[@type='submit']")
-            
-            if login_btn:
-                log("🎯 実行ボタンをクリックします")
-                driver.execute_script("arguments[0].click();", login_btn[0])
-            else:
-                log("⌨️ ボタンが見つからないためEnterキーで代用します")
-                pw_field.send_keys(Keys.ENTER)
-            
+            log("⏳ ログイン処理の完了を待ちます（10秒）...")
             time.sleep(10)
             
-            # 最終確認
-            log(f"✅ 遷移後のタイトル: {driver.title}")
-            with open("after_action.html", "w", encoding="utf-8") as f:
-                f.write(driver.page_source)
-
+            log(f"✅ 最終URL: {driver.current_url}")
+            log(f"📄 最終タイトル: {driver.title}")
+            
             if "マイページ" in driver.title or "ログアウト" in driver.page_source:
-                log("🎉 成功！")
-                notify_discord("✅ JKKログイン成功！")
+                log("🎉 ログイン成功！突破しました！")
             else:
-                log("💀 ログインできませんでした。入力ミスか、ページが弾かれています。")
-                driver.save_screenshot("input_check.png")
+                log("💀 ログイン失敗。まだ何かが足りません。")
+                driver.save_screenshot("login_result.png")
         else:
-            log("🚨 入力欄が見つかりません。")
+            log("🚨 玄関ページにログインボタンが見つかりません。")
+            driver.save_screenshot("no_button_at_entrance.png")
 
     except Exception as e:
-        log(f"❌ エラー: {e}")
-        driver.save_screenshot("fatal_error.png")
+        log(f"❌ エラー発生: {e}")
+        driver.save_screenshot("crash.png")
     finally:
         driver.quit()
 
