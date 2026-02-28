@@ -6,7 +6,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 
 sys.stdout.reconfigure(encoding='utf-8')
@@ -18,75 +17,43 @@ def main():
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920,1080')
-    # 完全に「人間」のフリをするためのUser-Agent
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+    # 履歴を残さない「シークレットモード」をエミュレート
+    options.add_argument('--incognito') 
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        log("🚪 手順1: 玄関（TOP）に立ちます")
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
-        time.sleep(5) # ページが落ち着くまで待機
+        # 過去のCookieが邪魔をしている可能性を排除するため、全削除
+        driver.delete_all_cookies()
         
-        # 玄関のタイトルを確認
+        log("🧹 全ての過去を消去しました。真っさらな状態で玄関へ向かいます...")
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
+        time.sleep(7)
+        
         log(f"🏠 玄関のタイトル: {driver.title}")
 
-        log("🖱️ 手順2: ログインボタンにマウスを載せて『物理クリック』")
-        try:
-            # onclick="mypageLogin()" を持つ要素を特定
-            login_btn = driver.find_element(By.XPATH, "//*[@onclick[contains(.,'mypageLogin')]]")
+        if "おわび" in driver.title:
+            log("🚨 まだおわびが出ます。これはIPアドレス自体が一時的にブラックリスト入りしています。")
+            log("💡 対策: 1時間ほど放置してIPが変わるのを待つか、別のURLを試します。")
             
-            # 人間のように「マウスを動かしてクリック」
-            actions = ActionChains(driver)
-            actions.move_to_element(login_btn).click().perform()
-            log("👉 クリック完了。窓が開くのを待ちます...")
-        except Exception as e:
-            log(f"🚨 ボタンが見つかりません。強引にJSを叩きます: {e}")
-            driver.execute_script("mypageLogin();")
+            # 最後の悪あがき：URLの末尾にランダムな文字を入れてキャッシュを回避
+            log("🔄 最終手段：キャッシュ回避URLで再トライ...")
+            driver.get(f"https://jhomes.to-kousya.or.jp/search/jkknet/pc/?dummy={int(time.time())}")
+            time.sleep(5)
+            log(f"🏠 再トライ後のタイトル: {driver.title}")
 
-        # 手順3: 窓が2つになるまで、最大15秒間、人間が待つように小刻みにチェック
-        for i in range(30):
-            if len(driver.window_handles) > 1:
-                log(f"✨ 手順3: 新しい窓が開きました（{i*0.5}秒後に検知）")
+        # もし玄関が開いたら、ボタンを探す
+        btns = driver.find_elements(By.TAG_NAME, "a")
+        log(f"🔍 ページ内のリンク数: {len(btns)}")
+        
+        for btn in btns:
+            if "mypageLogin" in btn.get_attribute("onclick") or "ログイン" in btn.text:
+                log("🎯 ボタン発見！")
+                driver.execute_script("arguments[0].click();", btn)
                 break
-            time.sleep(0.5)
-
-        if len(driver.window_handles) > 1:
-            # 手順4: ログイン専用の別窓へ乗り換える
-            driver.switch_to.window(driver.window_handles[-1])
-            log(f"📑 ログイン窓に移動成功。URL: {driver.current_url}")
-            time.sleep(5) # フォームの読み込みを待つ
-
-            log(f"📄 窓のタイトル: {driver.title}")
-            
-            if "おわび" in driver.title:
-                log("💀 無念...手順を踏んでも『おわび』。リファラが欠落しているか、Cookieの初期化に失敗しています。")
-            else:
-                # 手順5: ログインフォームに入力
-                u = driver.find_elements(By.NAME, "uid")
-                if u:
-                    log("🎯 ターゲット捕捉！ログイン情報を流し込みます")
-                    u[0].send_keys(os.environ.get("JKK_ID"))
-                    driver.find_element(By.NAME, "passwd").send_keys(os.environ.get("JKK_PASSWORD"))
-                    
-                    # ログイン実行（送信ボタンを物理クリック）
-                    submit_btn = driver.find_element(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]")
-                    submit_btn.click()
-                    
-                    time.sleep(10)
-                    log(f"✅ 最終URL: {driver.current_url}")
-                    log(f"📄 最終タイトル: {driver.title}")
-                    
-                    if "おわび" not in driver.title:
-                        log("🎉🎉🎉 ついに『おわび』の迷宮を脱出しました！")
-                else:
-                    log("🚨 窓は開いたが、uid入力欄が見つかりません。")
-        else:
-            log("💀 窓が1つのままです。ポップアップがブロックされたか、クリックが効いていません。")
 
     except Exception as e:
-        log(f"❌ 予期せぬエラー: {e}")
+        log(f"❌ エラー: {e}")
     finally:
         driver.quit()
 
