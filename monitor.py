@@ -13,15 +13,16 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
+LOGIN_JSP = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
 
 def setup_driver():
     options = Options()
-    # あえて 'new' ではない旧来の headless を使う（レトロサイトとの相性が良い場合があるため）
-    options.add_argument('--headless=old')
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1024,768') # 当時の標準解像度
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0) like Gecko') # IE11に偽装
+    options.add_argument('--window-size=1280,1024')
+    options.add_argument('--lang=ja-JP')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
@@ -29,63 +30,75 @@ def main():
     try:
         driver = setup_driver()
         
-        log("🕰️ タイムスリップ開始。玄関ページへ...")
+        log("🚪 玄関ページでCookieを定着させます...")
         driver.get(START_URL)
-        time.sleep(7) # サーバーが落ち着くのを待つ
+        time.sleep(5)
         
-        log("💉 レトロなお作法（ウィンドウ名とReferer）を注入中...")
-        # サイト側のmypageLogin()を解析した挙動をJSで再現
-        driver.execute_script("""
-            window.name = 'JKK_TOP';
-            var loginWin = window.open('about:blank', 'JKK_WIN', 'width=800,height=600');
-            loginWin.location.href = 'https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin';
+        # --- レトロ攻略の極意：自己フレーム化 ---
+        log("🏗️ 画面を強引にFrameset構造へ改造します...")
+        # window.nameを固定しつつ、ドキュメント全体を書き換えて「おわび」判定を封じる
+        driver.execute_script(f"""
+            window.name = "JKK_TOP";
+            document.open();
+            document.write('<html><head><title>JKK_SYSTEM</title></head>');
+            document.write('<frameset rows="*">');
+            document.write('<frame name="JKK_WIN" id="JKK_WIN" src="{LOGIN_JSP}">');
+            document.write('</frameset></html>');
+            document.close();
         """)
         
-        time.sleep(10)
+        # 内部フレームが読み込まれるまでじっくり待機
+        log("⏳ 内部フレームの生成を待機中...")
+        time.sleep(20)
         
-        # ログイン窓に移動
-        handles = driver.window_handles
-        driver.switch_to.window(handles[-1])
-        log(f"🔎 ログイン窓を捕捉。Title: {driver.title}")
-
-        # ここでまだ「おわび」なら、Cookieの伝播が遅い
-        if "おわび" in driver.title:
-            log("🚨 まだ『おわび』です。サーバーに『私は人間です』と再アピールします...")
-            driver.refresh()
-            time.sleep(10)
-
-        def deep_scan():
-            # ページ内の全フレームを虱潰しに探す
-            for frame_type in ["frame", "iframe"]:
-                fms = driver.find_elements(By.TAG_NAME, frame_type)
-                for i in range(len(fms)):
+        # 生成したフレーム 'JKK_WIN' に潜り込む
+        try:
+            driver.switch_to.frame("JKK_WIN")
+            log(f"🔎 フレーム内部に潜入。Title: {driver.title}")
+            
+            # 再帰的に全要素からID/PASS入力欄を探す
+            def find_and_fill(d):
+                u = d.find_elements(By.NAME, "uid")
+                p = d.find_elements(By.XPATH, "//input[@type='password']")
+                if u and p:
+                    log("🎯 ついにログインフォームの『生身』を捕捉！")
+                    u[0].send_keys(os.environ.get("JKK_ID"))
+                    p[0].send_keys(os.environ.get("JKK_PASSWORD"))
+                    
+                    # 送信。レトロサイトは .submit() よりクリックを好む
+                    btn = d.find_elements(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]")
+                    if btn:
+                        log("🖱️ ログインボタンをクリック。")
+                        btn[0].click()
+                    else:
+                        p[0].submit()
+                    return True
+                
+                # 孫フレームがあればさらに掘る
+                sub_fms = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
+                for i in range(len(sub_fms)):
                     try:
-                        driver.switch_to.frame(i)
-                        log(f"--- Frame[{i}] スキャン中 ---")
-                        u = driver.find_elements(By.NAME, "uid")
-                        if u:
-                            log("🎯 ビンゴ！ログインフォームを発見！")
-                            u[0].send_keys(os.environ.get("JKK_ID"))
-                            driver.find_element(By.XPATH, "//input[@type='password']").send_keys(os.environ.get("JKK_PASSWORD"))
-                            # 送信は 'submit' ではなく、物理クリックを模倣
-                            btn = driver.find_element(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]")
-                            driver.execute_script("arguments[0].click();", btn)
-                            return True
-                        driver.switch_to.parent_frame()
-                    except:
-                        driver.switch_to.default_content()
-                        continue
-            return False
+                        d.switch_to.frame(i)
+                        if find_and_fill(d): return True
+                        d.switch_to.parent_frame()
+                    except: continue
+                return False
 
-        if deep_scan():
-            log("🚀 ログイン情報を送信しました。")
-            time.sleep(15)
-            log(f"最終地点: {driver.current_url}")
-        else:
-            log("🚨 フォームが見つかりません。当時のサイト特有の『隠しフレーム』に阻まれています。")
+            if find_and_fill(driver):
+                log("🚀 送信完了。マイページへの遷移を待ちます。")
+                time.sleep(10)
+                driver.switch_to.default_content() # 一旦外に出て状況確認
+                log(f"最終URL: {driver.current_url}")
+            else:
+                log(f"🚨 フォームが見つかりません。タイトル: {driver.title}")
+                # おわび回避のデバッグ用にソース末尾を
+                log(f"ソース断片: {driver.page_source[-300:]}")
+
+        except Exception as fe:
+            log(f"❌ フレーム遷移に失敗: {fe}")
 
     except Exception as e:
-        log(f"❌ 時代遅れのエラー: {e}")
+        log(f"❌ 致命的エラー: {e}")
     finally:
         if driver: driver.quit()
 
