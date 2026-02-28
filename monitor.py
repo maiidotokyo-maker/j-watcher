@@ -22,10 +22,6 @@ def setup_driver():
     options.add_argument('--window-size=1280,1024')
     options.add_argument('--lang=ja-JP')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
-    
-    # ポップアップブロックを完全に無効化する設定
-    options.add_experimental_option("prefs", {"profile.default_content_settings.popups": 1})
-    
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def main():
@@ -37,11 +33,16 @@ def main():
         driver.get(START_URL)
         time.sleep(10)
         
-        # --- レトロサイト攻略の核：window.openのフック ---
-        log("💉 window.open を無効化し、カレントウィンドウでの遷移に書き換えます...")
+        # --- レトロサイト攻略の「核」：ウィンドウ名の偽装 ---
+        log("💉 ウィンドウ名を固定し、window.open をカレント遷移にフックします...")
         driver.execute_script("""
+            // ウィンドウ自体に名前を付ける（これがレトロサイトのチェック対象）
+            window.name = "JKKNET_WINDOW"; 
+            
+            // window.openが呼ばれたら、今の画面で開きつつ、名前を維持する
             window.open = function(url, name, features) {
-                console.log('Redirecting to: ' + url);
+                console.log('Opening: ' + url + ' with name: ' + name);
+                if(name) window.name = name; 
                 window.location.href = url;
                 return window;
             };
@@ -50,28 +51,22 @@ def main():
         log("🖱️ ログイン関数を実行...")
         driver.execute_script("if(window.mypageLogin){ mypageLogin(); }")
         
-        # 遷移を待つ（ここが勝負）
-        time.sleep(15)
+        time.sleep(20) # 遷移とJS実行をじっくり待つ
 
         log(f"DEBUG: 現在のURL: {driver.current_url}")
         log(f"DEBUG: タイトル: {driver.title}")
+        log(f"DEBUG: ウィンドウ名: {driver.execute_script('return window.name;')}")
 
-        if "おわび" in driver.title:
-            log("🚨 まだ『おわび』です。URL直撃に切り替えます...")
-            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
-            time.sleep(10)
-
-        # ログインフォームを全フレームから探す
+        # フォーム探索（全フレーム）
         def find_and_fill(d):
-            # name='uid' や type='password' を探す
+            # ID/PASSを探す（name='uid'、type='password'）
             u = d.find_elements(By.NAME, "uid")
             p = d.find_elements(By.XPATH, "//input[@type='password']")
             if u and p:
-                log("🎯 ついにログインフォームを捕捉！")
+                log("🎯 ついにログインフォームを捕捉しました！")
                 u[0].send_keys(os.environ.get("JKK_ID"))
                 p[0].send_keys(os.environ.get("JKK_PASSWORD"))
-                # submit
-                btn = d.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')]")
+                btn = d.find_elements(By.XPATH, "//input[@type='image'] | //img[contains(@src, 'login')] | //input[@type='submit']")
                 if btn: btn[0].click()
                 else: p[0].submit()
                 return True
@@ -85,12 +80,11 @@ def main():
                 except: continue
             return False
 
-        if find_and_fill(driver):
-            log("✅ ログイン成功の兆し。送信完了。")
+        if not find_and_fill(driver):
+            log("🚨 フォーム未検出。おわびが続く場合は、直接URLを叩いて名前を維持します...")
+            driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin")
             time.sleep(10)
-            log(f"最終URL: {driver.current_url}")
-        else:
-            log("❌ フォームがありませんでした。")
+            find_and_fill(driver)
 
     except Exception as e:
         log(f"❌ エラー: {e}")
