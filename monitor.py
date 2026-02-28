@@ -6,8 +6,8 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 # --- 設定 ---
-# 枠組みを無視して、ログインフォーム本体があるURLを直接指定
-LOGIN_CORE_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/mypageLogin"
+# 直リンク禁止！必ず「玄関」から入る
+START_URL = "https://jhomes.to-kousya.or.jp/search/jkknet/pc/"
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 JKK_ID = os.environ.get("JKK_ID", "").strip()
 JKK_PASS = os.environ.get("JKK_PASSWORD", "").strip()
@@ -18,114 +18,102 @@ def setup_driver():
     options.add_argument('--window-size=1280,1024')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    # 完全に人間になりすますためのUA設定
+    # レトロサイトに怪しまれないための標準的なユーザーエージェント
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36')
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def login_and_check(driver):
-    print(f"🎯 ログインフォーム本体へ直撃: {LOGIN_CORE_URL}")
-    driver.get(LOGIN_CORE_URL)
-    time.sleep(10)
+    print(f"🏁 玄関ページ（トップページ）へアクセス: {START_URL}")
+    driver.get(START_URL)
+    time.sleep(8) # レトロサイトは読み込みに時間がかかるので待つ
 
-    # 現在のページにある全テキストを確認（デバッグ用）
-    body_text = driver.find_element(By.TAG_NAME, "body").text
-    print(f"📊 ページ内テキスト(先頭100文字): {body_text[:100].replace('\\n', ' ')}")
-
-    # 1. ID/PASS入力
-    print("⌨️ ID/PASSを入力中...")
-    status = driver.execute_script("""
-        const jkk_id = arguments[0];
-        const jkk_pass = arguments[1];
+    # 1. ログイン画面を開く（リンクを探してクリック）
+    print("🖱️ ログインボタンを探してクリックします...")
+    try:
+        # aタグや画像からログインらしきものを探す
+        elements = driver.find_elements(By.XPATH, "//a | //img")
+        login_btn = next((el for el in elements if 'ログイン' in el.text or 'login' in el.get_attribute('src').lower() or 'login' in el.get_attribute('href').lower()), None)
         
-        // 1. 直接 document から探す
-        let uid = document.querySelector('input[name*="uid"], input[id*="uid"], input[name*="user"]');
-        let upw = document.querySelector('input[type="password"]');
-        let btn = document.querySelector('img[src*="login"], input[type="submit"], .btn_login');
-
-        if (uid && upw) {
-            uid.value = jkk_id;
-            upw.value = jkk_pass;
-            if (btn) { btn.click(); return "SUCCESS_CLICK"; }
-            if (uid.form) { uid.form.submit(); return "SUCCESS_SUBMIT"; }
-        }
-        
-        // 2. フレームの中も念のため探す
-        for (let i = 0; i < window.frames.length; i++) {
-            try {
-                let fuid = window.frames[i].document.querySelector('input[name*="uid"]');
-                let fupw = window.frames[i].document.querySelector('input[type="password"]');
-                if (fuid && fupw) {
-                    fuid.value = jkk_id;
-                    fupw.value = jkk_pass;
-                    window.frames[i].document.forms[0].submit();
-                    return "SUCCESS_FRAME_SUBMIT";
-                }
-            } catch(e) {}
-        }
-        return "NOT_FOUND";
-    """, JKK_ID, JKK_PASS)
-
-    print(f"📊 ログイン処理結果: {status}")
-    
-    if "SUCCESS" not in status:
-        driver.save_screenshot("login_core_failed.png")
+        if login_btn:
+            login_btn.click()
+            print("✅ ログインボタンをクリックしました！")
+        else:
+            print("⚠️ ログインボタンが見つかりません。")
+            return False
+    except Exception as e:
+        print(f"❌ ボタンクリックでエラー: {e}")
         return False
 
-    time.sleep(10)
+    time.sleep(10) # 画面遷移またはポップアップを待つ
 
-    # 2. 検索条件画面への遷移を試行
-    print("📍 空室検索ボタンをクリック中...")
-    # documentから直接「btn_search_cond」などを探す
-    found_search = driver.execute_script("""
-        let b = Array.from(document.querySelectorAll('a, img')).find(el => 
-            el.src?.includes('btn_search_cond') || el.innerText?.includes('空室')
-        );
-        if (b) { b.click(); return true; }
-        return false;
-    """)
-    
-    if not found_search:
-        print("⚠️ 検索ボタンが見つかりません。リダイレクトを試みます。")
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/vacancy/area")
-    
-    time.sleep(8)
-
-    # 3. 世田谷区選択
-    print("🎯 エリア(世田谷区)を選択中...")
-    area_ok = driver.execute_script("""
-        let cb = document.querySelector("input[value='113']");
-        if (cb) {
-            cb.click();
-            let b = document.querySelector('img[src*="search"], a[onclick*="doSearch"]');
-            if (b) b.click(); else if (window.doSearch) window.doSearch();
-            return true;
-        }
-        return false;
-    """)
-
-    if not area_ok:
-        driver.save_screenshot("area_failed.png")
-        return False
-
-    # 4. 最終スキャン
-    time.sleep(10)
+    # --- 🪟 ポップアップ対応 ---
+    # もし新しいウィンドウが開いていたら、そっちに乗り換える
     if len(driver.window_handles) > 1:
         driver.switch_to.window(driver.window_handles[-1])
+        print("🪟 新しいウィンドウ（ポップアップ）に移動しました。")
 
-    vacant = driver.execute_script("return document.body.innerText.includes('DK') || document.body.innerText.includes('LDK') || document.body.innerText.includes('詳細');")
-    return vacant
+    # 2. フレームを切り替えながらID/PASSを探す（対フレームセット兵器）
+    print("⌨️ ログインフォームを探しています...")
+    logged_in = False
+    
+    # メインのHTML内に直接あるかチェック
+    try:
+        uid_input = driver.find_element(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user')]")
+        pw_input = driver.find_element(By.XPATH, "//input[@type='password']")
+        uid_input.send_keys(JKK_ID)
+        pw_input.send_keys(JKK_PASS)
+        pw_input.submit() # Enterキーを押すのと同じ効果
+        print("✅ メイン画面でログイン情報を送信しました！")
+        logged_in = True
+    except:
+        # メインになければ、フレームの中を一つずつ覗き込む
+        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        for i, frame in enumerate(frames):
+            try:
+                driver.switch_to.frame(frame)
+                uid_input = driver.find_element(By.XPATH, "//input[contains(@name, 'uid') or contains(@id, 'uid') or contains(@name, 'user')]")
+                pw_input = driver.find_element(By.XPATH, "//input[@type='password']")
+                
+                uid_input.send_keys(JKK_ID)
+                pw_input.send_keys(JKK_PASS)
+                pw_input.submit()
+                print(f"✅ フレーム[{i}]の中でログイン情報を送信しました！")
+                logged_in = True
+                driver.switch_to.default_content() # フレームから脱出
+                break
+            except:
+                driver.switch_to.default_content() # なければ脱出して次へ
+
+    if not logged_in:
+        print("❌ どうしても入力フォームが見つかりませんでした。")
+        driver.save_screenshot("retro_login_failed.png")
+        return False
+
+    # --- ログイン後の待機 ---
+    print("⏳ ログイン処理中...")
+    time.sleep(15)
+
+    # 以降、空室検索の処理（今回はまずログイン突破を最優先にするため、簡易的な生存確認のみ）
+    driver.save_screenshot("login_success_check.png")
+    print("📸 ログイン後の画面を保存しました。Artifactsで確認してください。")
+    
+    # マイページっぽい文字があるか確認
+    body_text = driver.find_element(By.TAG_NAME, "body").text
+    if "ログアウト" in body_text or "空室" in body_text or "退去" in body_text:
+        return True
+    
+    return False
 
 def main():
     driver = setup_driver()
     try:
         if login_and_check(driver):
-            print("🚨 空室を発見しました！")
-            requests.post(DISCORD_WEBHOOK_URL, json={"content": "🏠 **JKK世田谷区：空室あり！**"})
+            print("🚨 ログイン突破成功！（仮）")
+            # 検索ロジックはログインが安定してから追加します
         else:
-            print("👀 空室はありません。")
+            print("👀 ログイン突破ならず...")
     except Exception as e:
-        print(f"❌ エラー: {e}")
+        print(f"❌ 実行エラー: {e}")
     finally:
         driver.quit()
 
