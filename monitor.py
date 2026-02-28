@@ -12,6 +12,24 @@ sys.stdout.reconfigure(encoding='utf-8')
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
+def find_button_recursive(driver):
+    # 今いる階層でボタンを探す
+    btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]|//a[contains(@onclick, 'mypageLogin')]")
+    if btns:
+        return btns[0]
+    
+    # 子フレームを順番に潜って探す
+    frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+    for i in range(len(frames)):
+        try:
+            driver.switch_to.frame(i)
+            found = find_button_recursive(driver)
+            if found: return found
+            driver.switch_to.parent_frame()
+        except:
+            continue
+    return None
+
 def main():
     options = Options()
     options.add_argument('--headless=new')
@@ -23,44 +41,30 @@ def main():
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/pc/")
         time.sleep(5)
 
-        # フレーム（窓枠）が複数ある可能性があるので、全部順番にチェックする
-        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
-        btn = None
-
-        if not frames:
-            # フレームがなければ直接探す
-            btn = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]|//a[contains(@onclick, 'mypageLogin')]")
-        else:
-            # フレームを1つずつ覗いてボタンを探す
-            for i in range(len(frames)):
-                driver.switch_to.frame(i)
-                btn = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]|//a[contains(@onclick, 'mypageLogin')]")
-                if btn:
-                    log(f"🎯 第{i}フレームでボタンを発見")
-                    break
-                driver.switch_to.default_content()
+        # フレームを潜り倒してボタンを探す
+        btn = find_button_recursive(driver)
 
         if btn:
-            btn[0].click()
+            log("🎯 ボタン発見、クリックします")
+            btn.click()
             time.sleep(10)
             
-            # 別窓が開いたらそっちに移動
+            # 別窓へ移動
             if len(driver.window_handles) > 1:
                 driver.switch_to.window(driver.window_handles[-1])
             
-            log(f"📄 現在のページ: {driver.title}")
-            
-            # ログイン入力（ここもシンプルに）
+            log(f"📄 到着: {driver.title}")
+
+            # ログイン入力
             u = driver.find_elements(By.NAME, "uid")
             if u:
-                log("🎯 入力開始")
                 u[0].send_keys(os.environ.get("JKK_ID"))
                 driver.find_element(By.NAME, "passwd").send_keys(os.environ.get("JKK_PASSWORD"))
                 driver.find_element(By.XPATH, "//input[@type='image']|//img[contains(@src,'login')]").click()
                 time.sleep(5)
-                log(f"✅ 到達URL: {driver.current_url}")
+                log(f"✅ ログイン後のURL: {driver.current_url}")
         else:
-            log("🚨 ログインボタンがどこにも見つかりません")
+            log("🚨 迷宮の奥底にもボタンがありませんでした")
 
     finally:
         driver.quit()
