@@ -24,14 +24,13 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        # 手順1: トップページ（Refererの偽装元となるベースキャンプ）
+        # 手順1: トップページ（サーバーに「公式サイトから来た」と認識させるための儀式）
         log("🚪 手順1: 公式サイト(www)へアクセス")
         driver.get("https://www.to-kousya.or.jp/")
         time.sleep(5)
 
-        # 手順2: 直通ドアを生成して強行突破
-        # UIに依存せず、ページ内に見えないリンクを作ってクリックさせる（これで正規遷移の証拠が残る）
-        log("🌉 手順2: ページ内に直通リンクを自動生成して遷移します")
+        # 手順2: 画面の文字化け（□□□□）を完全無視し、見えないリンクを生成してクリック
+        log("🌉 手順2: 直通リンクを自動生成して遷移します（文字化け・メニュー無視）")
         bridge_script = """
             let a = document.createElement('a');
             a.href = 'https://jhomes.to-kousya.or.jp/search/jkknet/pc/';
