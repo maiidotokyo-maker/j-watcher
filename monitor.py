@@ -25,45 +25,48 @@ def main():
         log("🚪 手順1: ログインページへアクセス")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
         
-        # ログイン画面のウィンドウへ切り替え
+        # 最初のウィンドウ切り替え
         WebDriverWait(driver, 20).until(lambda d: len(d.window_handles) > 1)
         driver.switch_to.window(driver.window_handles[-1])
         time.sleep(5)
 
-        log("⌨️ 手順2: ログイン情報入力")
-        # 直接ID/PWを入力して、サイトの submitNext 関数を実行する
-        driver.execute_script(f"""
-            var inputs = document.querySelectorAll('input[type="text"], input[type="password"], input[type="tel"]');
-            if(inputs.length >= 2){{
-                inputs[0].value = '{JKK_ID}';
-                inputs[1].value = '{JKK_PASSWORD}';
-                submitNext(); // サイト独自の関数を呼び出す
-            }}
-        """)
-        log("🚀 ログイン処理(submitNext)を実行しました")
-
-        # ログイン後にさらに新しいウィンドウが開く可能性があるため、ハンドルを確認
-        log("⏳ マイページの展開を待機中...")
-        time.sleep(15)
+        log("⌨️ 手順2: ログイン入力 & ボタンクリック")
+        # 入力欄を埋める
+        inputs = driver.find_elements(By.TAG_NAME, "input")
+        fields = [i for i in inputs if i.is_displayed() and i.get_attribute("type") in ["text", "password", "tel"]]
+        if len(fields) >= 2:
+            driver.execute_script("arguments[0].value = arguments[1];", fields[0], JKK_ID)
+            driver.execute_script("arguments[0].value = arguments[1];", fields[1], JKK_PASSWORD)
+            log("✅ 入力完了")
+            
+            # 青いログインボタンを画像名で特定してクリック
+            login_imgs = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]")
+            if login_imgs:
+                driver.execute_script("arguments[0].click();", login_imgs[0])
+                log("🚀 ログインボタンをクリックしました")
+            else:
+                # 画像で見つからない場合は親のリンクを探す
+                driver.execute_script("submitNext();")
         
-        # 最新のウィンドウに切り替え
+        log("⏳ 遷移待ち（25秒）... ここでマイページが開くのをじっくり待ちます")
+        time.sleep(25)
+        
+        # マイページが別ウィンドウで開く場合があるため、再度ハンドルを確認
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
-            log("🔄 最新のウィンドウ（マイページ）に切り替えました")
+            log("🔄 最新ウィンドウに切り替えました")
 
-        # --- ゴール1: 「条件から検索」ボタンを探す ---
+        # --- ゴール1: 「条件から検索」をクリック ---
         log("🔍 ゴール1: 「条件から検索」ボタンを探索中")
         
-        def find_and_click_search_btn():
-            # 親フレームと全iframeをチェック
+        def try_click_search_btn():
             driver.switch_to.default_content()
-            # まずは直下を探す
+            # 1. 直接探す
             btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
             if btns:
                 driver.execute_script("arguments[0].click();", btns[0])
                 return True
-            
-            # iframe内を探す
+            # 2. iframe内を探す
             frames = driver.find_elements(By.TAG_NAME, "iframe")
             for i in range(len(frames)):
                 try:
@@ -71,23 +74,23 @@ def main():
                     driver.switch_to.frame(i)
                     btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
                     if btns:
-                        log(f"🎯 iframe[{i}] 内でボタンを発見しクリックしました")
+                        log(f"🎯 iframe[{i}] 内でボタンを発見")
                         driver.execute_script("arguments[0].click();", btns[0])
                         return True
                 except: continue
             return False
 
-        if find_and_click_search_btn():
+        if try_click_search_btn():
             time.sleep(10)
             driver.save_screenshot("goal_1_success.png")
-            log("✨ 第1ゴール突破！検索条件（世田谷区選択）画面へ到達しました")
+            log("✨ 第1ゴール突破！「世田谷区」を選択する画面に到達しました")
         else:
-            driver.save_screenshot("goal_1_failed_check.png")
-            log("❌ 第1ゴール失敗。マイページ内のボタンが見つかりません")
+            driver.save_screenshot("goal_1_failed_final_check.png")
+            log("❌ 第1ゴール失敗。画面の状態を確認してください")
 
     except Exception as e:
         log(f"⚠️ エラー: {e}")
-        driver.save_screenshot("error_detail.png")
+        driver.save_screenshot("fatal_debug.png")
     finally:
         driver.quit()
 
