@@ -22,52 +22,63 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        log("🚪 ログイン開始")
+        log("🚪 ログイン開始（再帰探索モード）")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
         
-        # 1. ログイン窓が出るまで待機
+        # 1. ログイン窓へ移動
         time.sleep(10)
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
-            log("🪟 ログイン窓に切り替え")
+            log("🪟 ログイン窓を捕捉")
 
-        # 2. 【核心】全iframeを走査してID/PWを叩き込むJavaScript
-        log("⌨️ 全iframeへID/PWを強制注入...")
-        inject_script = """
-        var inputs_found = false;
-        function fill(doc) {
-            var u = doc.getElementsByName('user_id')[0];
-            var p = doc.getElementsByName('password')[0];
-            if (u && p) {
-                u.value = arguments[0];
-                p.value = arguments[1];
-                doc.defaultView.submitNext();
-                inputs_found = true;
-            }
+        # 2. 【核心】再帰的にすべてのiframeの奥底まで探索するJavaScript
+        log("⛏️ 全iframeの奥底までID/PWを注入します...")
+        deep_inject_script = """
+        var found = false;
+        function findAndFill(win) {
+            if (!win || found) return;
+            try {
+                var doc = win.document;
+                var u = doc.getElementsByName('user_id')[0];
+                var p = doc.getElementsByName('password')[0];
+                if (u && p) {
+                    u.value = arguments[0];
+                    p.value = arguments[1];
+                    // フォーム送信
+                    if (win.submitNext) { win.submitNext(); } 
+                    else if (doc.defaultView.submitNext) { doc.defaultView.submitNext(); }
+                    found = true;
+                    return;
+                }
+                // 子iframeを再帰探索
+                var fs = win.frames;
+                for (var i = 0; i < fs.length; i++) {
+                    findAndFill(fs[i]);
+                }
+            } catch (e) {}
         }
-        fill(document);
-        var frames = document.getElementsByTagName('iframe');
-        for (var i = 0; i < frames.length; i++) {
-            try { fill(frames[i].contentDocument); } catch(e) {}
-        }
-        return inputs_found;
+        findAndFill(window);
+        return found;
         """
         
-        success = driver.execute_script(inject_script, JKK_ID, JKK_PASSWORD)
-        
-        if success:
-            log("🚀 注入成功！遷移を待ちます...")
-            time.sleep(15)
-            driver.switch_to.default_content()
-            driver.save_screenshot("final_hope.png")
-            log("📸 『final_hope.png』を確認してください。クジラが消えていれば勝ちです。")
-        else:
-            log("⚠️ 入力欄が見つかりませんでした。")
-            driver.save_screenshot("not_found.png")
+        # 3. 実行
+        for attempt in range(5): # 最大5回、時間を置いてリトライ
+            success = driver.execute_script(deep_inject_script, JKK_ID, JKK_PASSWORD)
+            if success:
+                log("🚀 ついにヒット！注入と送信を実行しました。")
+                break
+            log(f"⏳ 探索中... (試行 {attempt+1}/5)")
+            time.sleep(3)
+
+        # 4. 遷移後の結果
+        time.sleep(15)
+        driver.switch_to.default_content()
+        driver.save_screenshot("final_recursive_result.png")
+        log("📸 結果を『final_recursive_result.png』に保存しました。")
 
     except Exception as e:
         log(f"⚠️ エラー: {e}")
-        driver.save_screenshot("last_error.png")
+        driver.save_screenshot("recursive_error.png")
     finally:
         driver.quit()
 
