@@ -9,7 +9,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -19,11 +18,15 @@ def log(msg):
 
 def create_driver():
     options = Options()
+    # 最新のHeadlessモードを指定
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+    
+    # ボット検知回避
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
@@ -32,19 +35,23 @@ def create_driver():
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     return driver
 
-def wait_and_click(driver, wait, by, target):
-    """ActionChainsで確実にクリック"""
-    elem = wait.until(EC.element_to_be_clickable((by, target)))
-    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elem)
-    time.sleep(1) # スクロール後の安定待ち
-    ActionChains(driver).move_to_element(elem).click().perform()
-    log(f"🖱️ Clicked: {target}")
+def force_navigate(driver, wait, xpath):
+    """要素からURLを抜き取り、JSで現在のタブを強制移動させる"""
+    element = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+    url = element.get_attribute("href")
+    log(f"🔗 遷移先URL取得: {url}")
+    # location.hrefの書き換えは、Refererを維持しつつ「この窓」で開く最強の手法
+    driver.execute_script(f"window.location.href = '{url}';")
+    # ページ遷移後のbody出現を待機
+    wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+    time.sleep(2)
 
-def fill_login_form(driver, wait, uid, pwd):
-    """全フレームを探索してログイン。送信ボタンも物理クリックを試行"""
+def fill_login_form(driver, uid, pwd):
+    """メイン画面 + 全フレームを探索してログイン実行"""
     targets = [driver]
     try:
-        targets.extend(driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe"))
+        frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+        targets.extend(frames)
     except: pass
 
     for t in targets:
@@ -52,78 +59,68 @@ def fill_login_form(driver, wait, uid, pwd):
         try:
             u = driver.find_element(By.NAME, "uid")
             p = driver.find_element(By.NAME, "passwd")
-            u.send_keys(uid)
-            p.send_keys(pwd)
-            # 送信ボタンをNAMEやXPATHで探してクリック。なければsubmit()
-            try:
-                # JKKのログインボタンの一般的なパターン
-                login_btn = driver.find_element(By.XPATH, "//input[@type='submit' or @type='image' or contains(@src, 'login')]")
-                login_btn.click()
-            except:
-                p.submit()
+            # 入力もJSで確実に行う
+            driver.execute_script("arguments[0].value = arguments[1];", u, uid)
+            driver.execute_script("arguments[0].value = arguments[1];", p, pwd)
+            p.submit()
             return True
         except:
             driver.switch_to.default_content()
     return False
 
-def run_monitor():
+def main():
     JKK_ID = os.environ.get("JKK_ID")
     JKK_PASSWORD = os.environ.get("JKK_PASSWORD")
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL")
 
     driver = create_driver()
-    wait = WebDriverWait(driver, 45)
+    wait = WebDriverWait(driver, 30)
 
     try:
-        log("🚪 公式トップアクセス")
+        # ① 公式トップ
+        log("🚪 手順1: トップアクセス")
         driver.get("https://www.to-kousya.or.jp/")
 
-        log("🌉 JKKねっとリンククリック")
-        handles_before = len(driver.window_handles)
-        wait_and_click(driver, wait, By.XPATH, "//a[contains(@href,'jkk')]")
-        
-        # ウィンドウが増えるまで待機してから切替
-        wait.until(lambda d: len(d.window_handles) > handles_before)
-        driver.switch_to.window(driver.window_handles[-1])
-        time.sleep(2)
+        # ② JKKねっとへ遷移（物理クリックを避け、URL抽出型へ）
+        log("🌉 手順2: JKKねっとへ同一タブ遷移")
+        force_navigate(driver, wait, "//a[contains(@href,'jkk')]")
 
-        log("🔑 ログインリンククリック")
-        handles_before = len(driver.window_handles)
-        wait_and_click(driver, wait, By.XPATH, "//a[contains(@href,'login')]")
-        
-        wait.until(lambda d: len(d.window_handles) > handles_before)
-        driver.switch_to.window(driver.window_handles[-1])
-        time.sleep(2)
+        # ③ ログイン画面へ遷移
+        log("🔑 手順3: ログイン画面へ同一タブ遷移")
+        force_navigate(driver, wait, "//a[contains(@href,'login')]")
 
-        log("⌨️ ログインフォーム入力")
-        if not fill_login_form(driver, wait, JKK_ID, JKK_PASSWORD):
-            log("💀 フォームが見つかりません")
+        # ④ ログインフォーム入力
+        log("⌨️ 手順4: ログインフォーム入力")
+        if not fill_login_form(driver, JKK_ID, JKK_PASSWORD):
+            log("💀 フォームが見つかりませんでした")
+            driver.save_screenshot("no_form.png")
             return
 
-        log("🚀 認証待機...")
-        # URLが変わるか、特定要素が出るまで待機
+        log("🚀 認証待機中...")
+        # URLの変化または特定文字列の出現を待つ
         wait.until(EC.any_of(
             EC.url_contains("mypage"),
             EC.url_contains("menu"),
             EC.title_contains("おわび")
         ))
 
-        if "mypage" in driver.current_url or "menu" in driver.current_url:
+        final_url = driver.current_url
+        log(f"📍 最終URL: {final_url}")
+
+        if "mypage" in final_url or "menu" in final_url:
             log("🎉 ログイン成功！")
             if DISCORD_WEBHOOK:
-                requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログイン成功！\n監視を開始します。"})
-            
-            # TODO: ここに空室検索ロジックを追加
-            
+                requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログイン成功（CI特化・URL抽出版）"})
         else:
             log(f"💀 失敗: {driver.title}")
+            driver.save_screenshot("fail.png")
 
     except Exception as e:
-        log(f"❌ エラー: {e}")
+        log(f"❌ エラー発生: {e}")
+        driver.save_screenshot("error.png")
     finally:
         driver.quit()
+        log("🏁 プロセス終了")
 
 if __name__ == "__main__":
-    # 日本時間(JST)で計算 (GitHub Actionsは通常UTCなので注意)
-    # UTC 23:00 〜 11:00 が 日本時間 8:00 〜 20:00
-    run_monitor() # まずは時間制限なしでテスト
+    main()
