@@ -5,8 +5,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def log(msg):
@@ -22,42 +20,54 @@ def main():
     options.add_argument("--window-size=1920,1080")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    wait = WebDriverWait(driver, 20) # 最大20秒待つが、見つかれば即実行
     
     try:
         log("🚪 ログイン開始")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
         
-        # 1. ログイン窓へ即座に切り替え
-        wait.until(lambda d: len(d.window_handles) > 1)
-        driver.switch_to.window(driver.window_handles[-1])
+        # 1. ログイン窓が出るまで待機
+        time.sleep(10)
+        if len(driver.window_handles) > 1:
+            driver.switch_to.window(driver.window_handles[-1])
+            log("🪟 ログイン窓に切り替え")
 
-        # 2. iframeの中身が出るまで待機してスイッチ（ここが最重要）
-        log("⏳ フォーム読み込み待機...")
-        wait.until(EC.frame_to_be_available_and_switch_to_it((By.TAG_NAME, "iframe")))
+        # 2. 【核心】全iframeを走査してID/PWを叩き込むJavaScript
+        log("⌨️ 全iframeへID/PWを強制注入...")
+        inject_script = """
+        var inputs_found = false;
+        function fill(doc) {
+            var u = doc.getElementsByName('user_id')[0];
+            var p = doc.getElementsByName('password')[0];
+            if (u && p) {
+                u.value = arguments[0];
+                p.value = arguments[1];
+                doc.defaultView.submitNext();
+                inputs_found = true;
+            }
+        }
+        fill(document);
+        var frames = document.getElementsByTagName('iframe');
+        for (var i = 0; i < frames.length; i++) {
+            try { fill(frames[i].contentDocument); } catch(e) {}
+        }
+        return inputs_found;
+        """
         
-        # 3. 入力欄が見えた瞬間に値をセット
-        user_field = wait.until(EC.element_to_be_clickable((By.NAME, "user_id")))
-        pass_field = driver.find_element(By.NAME, "password")
+        success = driver.execute_script(inject_script, JKK_ID, JKK_PASSWORD)
         
-        log("⌨️ ID/PW入力")
-        user_field.send_keys(JKK_ID)
-        pass_field.send_keys(JKK_PASSWORD)
-        
-        # 4. ログインボタンをクリック
-        login_btn = driver.find_element(By.XPATH, "//a[contains(@onclick, 'submitNext')]")
-        driver.execute_script("arguments[0].click();", login_btn)
-        log("🚀 ログイン実行")
-
-        # 5. ログイン後の遷移確認（ここは数秒待ちます）
-        time.sleep(5)
-        driver.switch_to.default_content()
-        driver.save_screenshot("quick_check.png")
-        log("📸 『quick_check.png』を確認してください。")
+        if success:
+            log("🚀 注入成功！遷移を待ちます...")
+            time.sleep(15)
+            driver.switch_to.default_content()
+            driver.save_screenshot("final_hope.png")
+            log("📸 『final_hope.png』を確認してください。クジラが消えていれば勝ちです。")
+        else:
+            log("⚠️ 入力欄が見つかりませんでした。")
+            driver.save_screenshot("not_found.png")
 
     except Exception as e:
         log(f"⚠️ エラー: {e}")
-        driver.save_screenshot("error_shot.png")
+        driver.save_screenshot("last_error.png")
     finally:
         driver.quit()
 
