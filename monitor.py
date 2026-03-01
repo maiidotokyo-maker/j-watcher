@@ -18,27 +18,21 @@ def log(msg):
 
 def create_driver():
     options = Options()
-    options.add_argument("--headless=new") # 最新のヘッドレスモード
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     
-    # 🕵️ 重要：完全に人間を装うための設定
+    # 日本の一般的な環境を偽装
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     options.add_argument(f'--user-agent={user_agent}')
-    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument('--lang=ja-JP')
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument('--lang=ja-JP') # 言語を日本語に固定
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    
-    # 🕵️ 重要：JavaScriptレベルでの自動化判定を削除
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": """
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            window.chrome = { runtime: {} };
-        """
+        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
     return driver
 
@@ -48,52 +42,53 @@ def main():
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL")
 
     driver = create_driver()
-    wait = WebDriverWait(driver, 30)
+    wait = WebDriverWait(driver, 45) # 待機をさらに延長
 
     try:
-        # ① 直接「お部屋探し」トップではなく、もう少し深い階層から入る
-        # (404回避のため、まずはトップページを一度踏む)
-        log("🚪 手順1: JKK東京公式サイトへアクセス")
-        driver.get("https://www.to-kousya.or.jp/")
-        time.sleep(5)
-        
-        # ② JavaScriptで強制的に「JKKねっと」入り口へ移動
-        # (ボタンが見つからない場合も考慮し、直接遷移とクリックを併用)
-        log("🔗 手順2: JKKねっと(jhomes)へ遷移中...")
-        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
-        time.sleep(8)
-        
-        driver.save_screenshot("after_redirect.png")
+        # 1. 検索条件入力ページへ（ここでシステム全体のCookieをセットさせる）
+        log("🚪 手順1: 空室検索ページでセッションを確立")
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/initS01")
+        time.sleep(10) # コンテンツのロードをじっくり待つ
 
-        # ③ フォーム入力（iframe/JS対策込み）
-        log("⌨️ 手順3: ログインフォーム探索")
+        # 2. 検索ページが開けているか確認（空っぽならここで終了）
+        driver.save_screenshot("step1_search_page.png")
         
-        # フォームが出るまで最大30秒待つ（海外サーバーからの遅延対策）
+        # 3. ログインページへ移動
+        log("🔗 手順2: ログインページへ切り替え")
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
+        time.sleep(10)
+        driver.save_screenshot("step2_login_form.png")
+
+        # 4. フォーム入力（iframe対応）
+        log("⌨️ 手順3: ログインフォーム入力")
+        
+        # iframeが複数ある可能性を考慮し、中身を探す
+        if len(driver.find_elements(By.TAG_NAME, "iframe")) > 0:
+            log("📦 iframe切り替え実行")
+            # コンテンツが入っているiframeを特定してスイッチ
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+            driver.switch_to.frame(frames[0])
+
+        # uidが出るまで待機
         u_field = wait.until(EC.presence_of_element_located((By.NAME, "uid")))
         p_field = driver.find_element(By.NAME, "passwd")
 
         driver.execute_script("arguments[0].value = arguments[1];", u_field, JKK_ID)
         driver.execute_script("arguments[0].value = arguments[1];", p_field, JKK_PASSWORD)
         
-        log("🚀 送信実行")
-        driver.save_screenshot("submitting.png")
+        log("🚀 送信")
         p_field.submit()
 
-        # ④ 認証成功確認
+        # 5. 成功判定
         wait.until(EC.any_of(
             EC.url_contains("mypage"),
-            EC.url_contains("Menu")
+            EC.title_contains("マイページ")
         ))
-
-        log(f"🎉 ログイン成功！ 現在URL: {driver.current_url}")
-        if DISCORD_WEBHOOK:
-            requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログインに成功しました。監視を開始します。"})
+        log("🎉 ログイン成功！")
 
     except Exception as e:
-        log(f"❌ エラー発生: {e}")
-        driver.save_screenshot("last_fatal_error.png")
-        # 404が出ているか確認するためにタイトルを表示
-        print(f"DEBUG - Page Title: {driver.title}")
+        log(f"❌ エラー: {e}")
+        driver.save_screenshot("error_detail.png")
     finally:
         driver.quit()
 
