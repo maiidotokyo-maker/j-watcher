@@ -10,7 +10,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 環境変数
 JKK_ID = os.environ.get("JKK_ID")
 JKK_PASSWORD = os.environ.get("JKK_PASSWORD")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -19,90 +18,85 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def send_discord(message, file_path=None):
-    """Discordへの通知送信 (改善点: エラーハンドリングの強化)"""
-    if not DISCORD_WEBHOOK_URL:
-        return
+    if not DISCORD_WEBHOOK_URL: return
     try:
-        payload = {"content": message}
         if file_path and os.path.exists(file_path):
             with open(file_path, "rb") as f:
-                requests.post(DISCORD_WEBHOOK_URL, data=payload, files={"file": f})
+                requests.post(DISCORD_WEBHOOK_URL, data={"content": message}, files={"file": f})
         else:
-            requests.post(DISCORD_WEBHOOK_URL, json=payload)
-        log("📢 Discord通知を送信しました。")
-    except Exception as e:
-        log(f"⚠️ Discord送信失敗: {e}")
-
-def solve_login(driver):
-    """レトロなiframe迷宮を突破するログイン処理"""
-    wait = WebDriverWait(driver, 20) # 改善点: 明示的待機
-    
-    # 1. ログイン窓への遷移 (改善点: ウィンドウ管理の厳格化)
-    base_handles = driver.window_handles
-    wait.until(lambda d: len(d.window_handles) > 1)
-    driver.switch_to.window(driver.window_handles[-1])
-    log("🪟 ログイン窓を捕捉しました。")
-
-    # 2. iframeの階層を突破
-    log("🕵️ iframe階層を探索中...")
-    # 1段目のフレーム待機とスイッチ
-    wait.until(EC.frame_to_be_available_and_switch_to_it((By.TAG_NAME, "iframe")))
-    
-    # レトロサイト特有の「入れ子」をチェック
-    sub_frames = driver.find_elements(By.TAG_NAME, "iframe")
-    if sub_frames:
-        driver.switch_to.frame(sub_frames[0])
-        log("⛏️ 深層のiframeへ潜入しました。")
-
-    # 3. 入力 (改善点: element_to_be_clickableを使用)
-    user_field = wait.until(EC.element_to_be_clickable((By.NAME, "user_id")))
-    pass_field = driver.find_element(By.NAME, "password")
-    
-    log("⌨️ ID/PWを入力しています...")
-    user_field.send_keys(JKK_ID)
-    pass_field.send_keys(JKK_PASSWORD)
-    
-    # 4. 物理的な送信
-    login_btn = driver.find_element(By.XPATH, "//a[contains(@onclick, 'submitNext')]")
-    driver.execute_script("arguments[0].click();", login_btn)
-    log("🚀 ログイン情報を送信しました。")
+            requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+    except: pass
 
 def main():
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     
-    # 改善点: webdriver_managerによる自動管理
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    wait = WebDriverWait(driver, 30)
     
     try:
-        log("🚪 手順1: サイトへアクセス")
+        log("🚪 サイトアクセス")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
         
-        # ログイン実行
-        solve_login(driver)
+        wait.until(lambda d: len(d.window_handles) > 1)
+        driver.switch_to.window(driver.window_handles[-1])
+        log("🪟 ログイン窓捕捉")
+
+        # 1. 全フレームをしらみつぶしに探す (トリプル・アタック)
+        log("🕵️ 入力エリアを探索開始...")
+        time.sleep(5) # 描画安定待ち
         
-        # ログイン後の遷移待機
-        time.sleep(10)
-        driver.switch_to.default_content()
-        
-        # 成功判定 (マイページ特有の要素を探す)
-        if "mypage" in driver.current_url.lower() or len(driver.find_elements(By.ID, "search-button")) > 0:
-            log("✅ ログイン成功！")
-            driver.save_screenshot("success_mypage.png")
-            send_discord("✅ JKKログイン成功！世田谷区の監視を開始できます。", "success_mypage.png")
-            # ここに世田谷区検索ロジックを追加可能
+        found = False
+        # 全てのiframeをリストアップ
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+        for f in frames:
+            driver.switch_to.frame(f)
+            # さらに中のフレームも探す
+            sub_frames = driver.find_elements(By.TAG_NAME, "iframe")
+            targets = [driver]
+            for sf in sub_frames:
+                driver.switch_to.frame(sf)
+                targets.append(driver)
+
+            for t in targets:
+                # 名前、ID、CSSセレクタの順で試行
+                u_selectors = [ (By.NAME, "user_id"), (By.ID, "user_id"), (By.CSS_SELECTOR, "input[type='text']") ]
+                for sel_type, sel_val in u_selectors:
+                    try:
+                        u = t.find_elements(sel_type, sel_val)
+                        if u and u[0].is_displayed():
+                            log(f"🎯 発見: {sel_val}")
+                            u[0].clear()
+                            u[0].send_keys(JKK_ID)
+                            p = t.find_element(By.NAME, "password")
+                            p.clear()
+                            p.send_keys(JKK_PASSWORD)
+                            # 送信
+                            btn = t.find_element(By.XPATH, "//a[contains(@onclick, 'submitNext')]")
+                            driver.execute_script("arguments[0].click();", btn)
+                            found = True
+                            break
+                    except: continue
+                if found: break
+            if found: break
+            driver.switch_to.default_content()
+            driver.switch_to.frame(f) # 親に戻る
+
+        if found:
+            log("🚀 送信成功。遷移待ち...")
+            time.sleep(15)
+            driver.switch_to.default_content()
+            driver.save_screenshot("final_result.png")
+            send_discord("✅ ログイン操作完了！結果を確認してください。", "final_result.png")
         else:
-            raise Exception("ログイン後の期待されるページに遷移しませんでした。")
+            raise Exception("入力欄を特定できませんでした。")
 
     except Exception as e:
-        log(f"⚠️ エラー発生: {e}")
-        error_img = "error_evidence.png"
-        driver.save_screenshot(error_img)
-        # 改善点: Discordへのエラー通知（画像付き）
-        send_discord(f"❌ 【JKK監視エラー】\n内容: {e}", error_img)
+        log(f"⚠️ エラー: {e}")
+        driver.save_screenshot("last_error.png")
+        send_discord(f"❌ エラー: {e}", "last_error.png")
     finally:
         driver.quit()
 
