@@ -11,11 +11,22 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# ログ出力の文字化け防止
+# ログの文字化け防止
 sys.stdout.reconfigure(encoding='utf-8')
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+def save_debug_screenshot(driver, filename):
+    """
+    CI環境（GitHub Actions）では個人情報漏洩防止のためスクショを保存しない。
+    ローカル環境での実行時のみ、デバッグ用に保存する。
+    """
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        log(f"⚠️ CI環境のため、セキュリティ保護によりスクショ保存をスキップしました: {filename}")
+    else:
+        driver.save_screenshot(filename)
+        log(f"📸 スクショを保存しました: {filename}")
 
 def main():
     options = Options()
@@ -30,87 +41,84 @@ def main():
     
     try:
         # 手順1: 公式サイト(www)へアクセス（Refererの起点）
-        log("🚪 手順1: 公社公式サイト(www)へアクセス")
+        log("🚪 手順1: 公式サイトへアクセス")
         driver.get("https://www.to-kousya.or.jp/")
 
-        # 手順2: 直通リンクを動的に生成して「物理クリック」
-        # これにより、文字化けやメニューの開閉状態に依存せず正規Refererを送信できる
-        log("🌉 手順2: 直通ブリッジリンクを生成して遷移（おわび画面対策）")
+        # 手順2: 物理的な「ブリッジボタン」を生成してクリック（面積を持たせる）
+        log("🌉 手順2: 物理ブリッジボタンを生成して遷移（おわび画面対策）")
         bridge_script = """
             let a = document.createElement('a');
             a.id = 'bridge_link';
             a.href = 'https://jhomes.to-kousya.or.jp/search/jkknet/pc/';
+            a.innerText = 'CLICK_FOR_SECURE_ACCESS';
+            a.style.cssText = 'position:fixed; top:0; left:0; width:300px; height:300px; z-index:9999; background:red; color:white; display:block;';
             document.body.appendChild(a);
         """
         driver.execute_script(bridge_script)
-        # Selenium側で要素を掴んでクリック（JSでの.click()より物理クリックに近い挙動）
-        driver.find_element(By.ID, "bridge_link").click()
-
-        # 手順3: ログイン画面呼び出し
-        log("🔑 手順3: ログイン画面(mypageLogin)を呼び出し")
-        wait.until(lambda d: d.execute_script("return typeof mypageLogin === 'function'"))
-        driver.execute_script("mypageLogin();")
         
-        # 別窓が開くのを待機
-        time.sleep(3)
+        # 物理的にクリック可能な状態になるのを待って叩く
+        bridge_btn = wait.until(EC.element_to_be_clickable((By.ID, "bridge_link")))
+        bridge_btn.click()
+        log("✅ ブリッジ遷移を実行しました")
+
+        # 手順3: ログイン画面(mypageLogin)呼び出し
+        log("🔑 手順3: ログイン画面を呼び出し")
+        time.sleep(5)
+        driver.execute_script("if(typeof mypageLogin === 'function') { mypageLogin(); }")
+        
+        # 別窓が開くのを待機してスイッチ
+        time.sleep(5)
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
             log(f"📑 ログインウィンドウに切り替えました: {driver.title}")
 
-        # 手順4: 安全なID/PW入力（send_keys 方式）
+        # 手順4: ID/PW入力（安全な send_keys 方式）
         log("⌨️ 手順4: ログイン情報を安全に入力中...")
 
         def try_fill_login(d):
             try:
-                # By.NAME で確実に特定。JS文字列展開は行わない
-                uid_field = d.find_element(By.NAME, "uid")
-                pwd_field = d.find_element(By.NAME, "passwd")
+                # 名前(NAME)で要素を特定。JSにID/PWを流さないので安全
+                u_field = d.find_element(By.NAME, "uid")
+                p_field = d.find_element(By.NAME, "passwd")
                 
-                uid_field.clear()
-                uid_field.send_keys(os.environ.get("JKK_ID"))
-                pwd_field.clear()
-                pwd_field.send_keys(os.environ.get("JKK_PASSWORD"))
+                u_field.clear()
+                u_field.send_keys(os.environ.get("JKK_ID", ""))
+                p_field.clear()
+                p_field.send_keys(os.environ.get("JKK_PASSWORD", ""))
                 
-                pwd_field.submit()
+                p_field.submit()
                 return True
             except:
                 return False
 
-        # 1. まずメインコンテンツで試行
+        # メイン画面またはフレーム内を探索
         if not try_fill_login(driver):
-            log("📦 メイン画面にフォームが見つからないため、フレーム内を走査します")
-            # 2. フレーム/アイフレームを全てチェック
+            log("📦 メイン画面にフォームがないため、フレーム内を探索します")
             frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
-            success = False
-            for index, frame in enumerate(frames):
+            for frame in frames:
                 driver.switch_to.frame(frame)
                 if try_fill_login(driver):
-                    log(f"🎯 第{index}フレーム内で入力に成功しました")
-                    success = True
+                    log("🎯 フレーム内での入力・送信に成功しました")
                     break
                 driver.switch_to.default_content()
-            
-            if not success:
-                raise Exception("ログインフォームがどのフレーム内にも見つかりませんでした。")
 
-        # 手順5: ログイン結果の検証
-        log("🚀 ログイン実行。最終判定へ向かいます...")
+        # 手順5: 最終URLでログイン成否を確認
+        log("🚀 ログイン処理の完了を待機中...")
         time.sleep(10)
+        log(f"📍 最終URL: {driver.current_url}")
         
-        log(f"📍 最終到達URL: {driver.current_url}")
         if "mypageMenu" in driver.current_url:
-            log("🎉 完全成功！セキュリティと安定性を両立してマイページを突破しました。")
+            log("🎉 完全成功！マイページに到達しました。")
             if os.environ.get("DISCORD_WEBHOOK_URL"):
-                requests.post(os.environ["DISCORD_WEBHOOK_URL"], json={
-                    "content": "✅ **JKKログイン成功！**\n安全な`send_keys`方式とブリッジ遷移により、くじらを回避してマイページに到達しました。"
-                })
+                requests.post(os.environ["DISCORD_WEBHOOK_URL"], json={"content": "✅ **JKKログイン成功！**"})
         else:
             log(f"💀 失敗。タイトル: {driver.title}")
-            driver.save_screenshot("final_fail.png")
+            # 安全なスクショ保存関数を呼び出し
+            save_debug_screenshot(driver, "login_failed_redacted.png")
 
     except Exception as e:
         log(f"❌ エラー発生: {str(e)}")
-        driver.save_screenshot("crash_report.png")
+        save_debug_screenshot(driver, "exception_occured.png")
     finally:
         driver.quit()
         log("🏁 プロセスを終了します")
