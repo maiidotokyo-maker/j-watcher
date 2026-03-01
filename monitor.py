@@ -1,6 +1,7 @@
 import os
 import sys
 import requests
+import time
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -8,7 +9,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -46,54 +46,71 @@ def main():
         log("🚪 手順1: 公式トップへアクセス")
         driver.get("https://www.to-kousya.or.jp/")
 
-        # 手順2: JKKねっとへのリンクを「同一タブ」で開くよう細工してクリック
-        log("🌉 手順2: JKKねっとリンクを同一タブで展開")
+        # 手順2: JKKねっとリンクをJSで強制クリック
+        log("🌉 手順2: JKKねっとリンクを同一タブで展開(JS強制)")
+        # リンクが見つかるまで待機
         jkk_link = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'jkk') or contains(text(),'JKK')]")))
         
-        # target="_blank" を消して、今の窓で開くように上書き
-        driver.execute_script("arguments[0].setAttribute('target', '_self');", jkk_link)
-        jkk_link.click()
+        # 画面内にスクロール ＋ target解除 ＋ 強制クリック
+        driver.execute_script("""
+            arguments[0].scrollIntoView(true);
+            arguments[0].setAttribute('target', '_self');
+            arguments[0].click();
+        """, jkk_link)
 
-        # 手順3: ログインリンクも同様に「同一タブ」でクリック
-        log("🔑 手順3: ログインボタンを同一タブで展開")
-        login_link = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@href,'login') or contains(text(),'ログイン')]")))
-        driver.execute_script("arguments[0].setAttribute('target', '_self');", login_link)
-        login_link.click()
+        # 手順3: ログインリンクをJSで強制クリック
+        log("🔑 手順3: ログインボタンを同一タブで展開(JS強制)")
+        login_link = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'login') or contains(text(),'ログイン')]")))
+        
+        driver.execute_script("""
+            arguments[0].scrollIntoView(true);
+            arguments[0].setAttribute('target', '_self');
+            arguments[0].click();
+        """, login_link)
 
         # 手順4: ログインフォーム入力
         log("⌨️ 手順4: ログインフォーム待機...")
         
         def fill_form(d):
+            # メイン画面と全フレームを探索
             targets = [d]
-            try: targets.extend(d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe"))
+            try:
+                frames = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
+                targets.extend(frames)
             except: pass
+            
             for t in targets:
                 if t != d: d.switch_to.frame(t)
                 try:
                     u = d.find_element(By.NAME, "uid")
                     p = d.find_element(By.NAME, "passwd")
-                    u.send_keys(JKK_ID)
-                    p.send_keys(JKK_PASSWORD)
+                    # 入力も念のためJSで行う（確実性アップ）
+                    d.execute_script("arguments[0].value = arguments[1];", u, JKK_ID)
+                    d.execute_script("arguments[0].value = arguments[1];", p, JKK_PASSWORD)
                     p.submit()
                     return True
-                except: d.switch_to.default_content()
+                except:
+                    d.switch_to.default_content()
             return False
 
         wait.until(fill_form)
         log("🚀 ログイン情報を送信")
 
         # 手順5: 成功判定
+        log("🏁 最終成否判定中...")
         wait.until(EC.any_of(
             EC.url_contains("mypage"),
             EC.url_contains("menu"),
             EC.title_contains("おわび")
         ))
 
-        log(f"📍 最終URL: {driver.current_url}")
-        if "mypage" in driver.current_url or "menu" in driver.current_url:
-            log("🎉 ログイン成功！ 同一タブ戦略の完全勝利です。")
+        final_url = driver.current_url
+        log(f"📍 最終URL: {final_url}")
+        
+        if "mypage" in final_url or "menu" in final_url:
+            log("🎉 ログイン成功！JS強制クリックによる物理制約の突破です。")
             if DISCORD_WEBHOOK:
-                requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログイン成功（同一タブ・ターゲット固定版）"})
+                requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログイン成功（JS強制クリック版）"})
         else:
             log(f"💀 失敗: {driver.title}")
 
