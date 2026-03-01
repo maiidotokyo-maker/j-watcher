@@ -1,9 +1,7 @@
 name: JKK Watcher
 
 on:
-  workflow_dispatch:        # 手動実行用
-  schedule:
-    - cron: '*/30 * * * *'  # 30分ごとに自動実行
+  workflow_dispatch:        # 手動実行用（これだけ残す）
 
 jobs:
   build:
@@ -30,7 +28,7 @@ jobs:
           JKK_PASSWORD: ${{ secrets.JKK_PASSWORD }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
-      # 失敗しても成功しても、生成されたデバッグファイルをGitHubにアップロードする
+      # アーティファクト保存はデバッグに不可欠なので維持
       - name: Upload Debug Files
         uses: actions/upload-artifact@v4
         if: always() 
@@ -39,4 +37,4 @@ jobs:
           path: |
             *.png
             *.html
-          retention-days: 3 # 3日間保存
+          retention-days: 3
