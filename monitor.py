@@ -22,7 +22,6 @@ def main():
     options.add_argument("--window-size=1920,1080")
     # ポップアップとJSの実行を安定させる設定
     options.add_argument("--disable-popup-blocking")
-    options.add_argument("--enable-javascript")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
@@ -69,7 +68,7 @@ def main():
         # 真っ白な画面対策：ロードが完了するまで最大30秒待機
         log("⏳ マイページの内容が表示されるまで待機...")
         found_search_btn = False
-        for _ in range(6):
+        for i in range(10):
             # 全フレームを再走査
             driver.switch_to.default_content()
             all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
@@ -85,19 +84,20 @@ def main():
                 driver.switch_to.default_content()
             
             if found_search_btn: break
-            log("...まだ読み込み中（または空ページ）。5秒待機...")
-            time.sleep(5)
-            # 画面が真っ白なら一度だけリフレッシュを試みる
-            if _ == 2 and not found_search_btn:
-                log("🔄 画面が動かないため、リフレッシュを試みます")
+            
+            # 画面が真っ白な場合のリカバリ：途中で1回だけリフレッシュを試みる
+            if i == 3 and not found_search_btn:
+                log("🔄 画面が白いままのため、強制リフレッシュを試みます...")
                 driver.refresh()
+            
+            time.sleep(5)
 
         if found_search_btn:
             time.sleep(10)
             driver.save_screenshot("goal_1_success.png")
             log("✨ 第1ゴール突破！！ 世田谷区が選べる画面に到達しました。")
         else:
-            driver.save_screenshot("goal_1_failed_final_check.png")
+            driver.save_screenshot("goal_1_failed_final.png")
             log(f"❌ 最終URL: {driver.current_url}")
             log("❌ 第1ゴール失敗。マイページの内容が取得できませんでした。")
 
