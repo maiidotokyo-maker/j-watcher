@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 import time
 import requests
 from datetime import datetime
@@ -11,117 +11,123 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# ログの文字化け防止
-sys.stdout.reconfigure(encoding='utf-8')
+sys.stdout.reconfigure(encoding="utf-8")
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-def save_debug_screenshot(driver, filename):
-    """
-    CI環境（GitHub Actions）では個人情報漏洩防止のためスクショを保存しない。
-    ローカル環境での実行時のみ、デバッグ用に保存する。
-    """
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        log(f"⚠️ CI環境のため、セキュリティ保護によりスクショ保存をスキップしました: {filename}")
-    else:
-        driver.save_screenshot(filename)
-        log(f"📸 スクショを保存しました: {filename}")
-
-def main():
+def create_driver():
     options = Options()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+    
+    # --- 【採用】アンチ・ボット検知オプション ---
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    wait = WebDriverWait(driver, 15)
     
-    try:
-        # 手順1: 公式サイト(www)へアクセス（Refererの起点）
-        log("🚪 手順1: 公式サイトへアクセス")
-        driver.get("https://www.to-kousya.or.jp/")
+    # --- 【採用】navigator.webdriver の隠蔽 ---
+    driver.execute_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        })
+    """)
+    return driver
 
-        # 手順2: 物理的な「ブリッジボタン」を生成してクリック（面積を持たせる）
-        log("🌉 手順2: 物理ブリッジボタンを生成して遷移（おわび画面対策）")
+def safe_screenshot(driver, name):
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        driver.save_screenshot(name)
+
+def main():
+    JKK_ID = os.environ.get("JKK_ID")
+    JKK_PASSWORD = os.environ.get("JKK_PASSWORD")
+    DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL")
+
+    if not JKK_ID or not JKK_PASSWORD:
+        log("❌ ID/PW未設定")
+        sys.exit(1)
+
+    driver = create_driver()
+    wait = WebDriverWait(driver, 20)
+
+    try:
+        # 手順1: 公式トップ（セッション開始）
+        log("🚪 手順1: 公式トップへアクセス")
+        driver.get("https://www.to-kousya.or.jp/")
+        time.sleep(3)
+
+        # 手順2: ブリッジ遷移（物理クリックのシミュレート）
+        log("🌉 手順2: ブリッジ遷移実行（Referer確立）")
         bridge_script = """
             let a = document.createElement('a');
             a.id = 'bridge_link';
             a.href = 'https://jhomes.to-kousya.or.jp/search/jkknet/pc/';
-            a.innerText = 'CLICK_FOR_SECURE_ACCESS';
-            a.style.cssText = 'position:fixed; top:0; left:0; width:300px; height:300px; z-index:9999; background:red; color:white; display:block;';
+            a.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;opacity:0.01;';
             document.body.appendChild(a);
         """
         driver.execute_script(bridge_script)
+        driver.find_element(By.ID, "bridge_link").click()
+
+        # 手順3: 同一タブ・ハイジャック（別窓を阻止しセッションを維持）
+        log("🔑 手順3: 同一タブでログイン画面を強制展開（ポップアップ阻止）")
+        hijack_script = """
+            window.open = function(url) { window.location.href = url; };
+            if(typeof mypageLogin === 'function') { mypageLogin(); }
+        """
+        driver.execute_script(hijack_script)
         
-        # 物理的にクリック可能な状態になるのを待って叩く
-        bridge_btn = wait.until(EC.element_to_be_clickable((By.ID, "bridge_link")))
-        bridge_btn.click()
-        log("✅ ブリッジ遷移を実行しました")
+        # URLの切り替わりを待機
+        time.sleep(7)
 
-        # 手順3: ログイン画面(mypageLogin)呼び出し
-        log("🔑 手順3: ログイン画面を呼び出し")
-        time.sleep(5)
-        driver.execute_script("if(typeof mypageLogin === 'function') { mypageLogin(); }")
+        # 手順4: ログインフォーム入力（安全なsend_keys方式）
+        log("⌨️ 手順4: ログイン情報の安全な投入")
         
-        # 別窓が開くのを待機してスイッチ
-        time.sleep(5)
-        if len(driver.window_handles) > 1:
-            driver.switch_to.window(driver.window_handles[-1])
-            log(f"📑 ログインウィンドウに切り替えました: {driver.title}")
-
-        # 手順4: ID/PW入力（安全な send_keys 方式）
-        log("⌨️ 手順4: ログイン情報を安全に入力中...")
-
-        def try_fill_login(d):
+        def try_fill(d):
             try:
-                # 名前(NAME)で要素を特定。JSにID/PWを流さないので安全
-                u_field = d.find_element(By.NAME, "uid")
-                p_field = d.find_element(By.NAME, "passwd")
-                
-                u_field.clear()
-                u_field.send_keys(os.environ.get("JKK_ID", ""))
-                p_field.clear()
-                p_field.send_keys(os.environ.get("JKK_PASSWORD", ""))
-                
-                p_field.submit()
+                u = d.find_element(By.NAME, "uid")
+                p = d.find_element(By.NAME, "passwd")
+                u.clear()
+                u.send_keys(JKK_ID)
+                p.clear()
+                p.send_keys(JKK_PASSWORD)
+                p.submit()
                 return True
             except:
                 return False
 
-        # メイン画面またはフレーム内を探索
-        if not try_fill_login(driver):
-            log("📦 メイン画面にフォームがないため、フレーム内を探索します")
+        if not try_fill(driver):
+            log("📦 フレーム内を探索します")
             frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
             for frame in frames:
                 driver.switch_to.frame(frame)
-                if try_fill_login(driver):
-                    log("🎯 フレーム内での入力・送信に成功しました")
+                if try_fill(driver):
+                    log("🎯 フレーム内で入力成功")
                     break
                 driver.switch_to.default_content()
 
-        # 手順5: 最終URLでログイン成否を確認
-        log("🚀 ログイン処理の完了を待機中...")
-        time.sleep(10)
-        log(f"📍 最終URL: {driver.current_url}")
+        # 手順5: 成功判定
+        log("🚀 最終判定中...")
+        wait.until(EC.any_of(EC.url_contains("mypage"), EC.url_contains("menu")))
         
-        if "mypageMenu" in driver.current_url:
-            log("🎉 完全成功！マイページに到達しました。")
-            if os.environ.get("DISCORD_WEBHOOK_URL"):
-                requests.post(os.environ["DISCORD_WEBHOOK_URL"], json={"content": "✅ **JKKログイン成功！**"})
+        log(f"📍 最終URL: {driver.current_url}")
+        if "mypage" in driver.current_url or "menu" in driver.current_url:
+            log("🎉 ついに突破！ボット検知を出し抜きました！")
+            if DISCORD_WEBHOOK:
+                requests.post(DISCORD_WEBHOOK, json={"content": "✅ **JKKログイン完全突破！**\nボット隠蔽設定 ＋ 同一タブ戦略の合わせ技で勝利しました。"})
         else:
             log(f"💀 失敗。タイトル: {driver.title}")
-            # 安全なスクショ保存関数を呼び出し
-            save_debug_screenshot(driver, "login_failed_redacted.png")
+            safe_screenshot(driver, "fail.png")
 
     except Exception as e:
-        log(f"❌ エラー発生: {str(e)}")
-        save_debug_screenshot(driver, "exception_occured.png")
+        log(f"❌ エラー: {e}")
+        safe_screenshot(driver, "error.png")
     finally:
         driver.quit()
-        log("🏁 プロセスを終了します")
 
 if __name__ == "__main__":
     main()
