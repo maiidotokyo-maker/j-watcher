@@ -5,6 +5,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def log(msg):
@@ -17,71 +19,83 @@ def main():
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
+    # ポップアップブロックを無効化
+    options.add_argument("--disable-popup-blocking")
+    
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
         log("🚪 手順1: サイトへアクセス")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
-        time.sleep(10)
+        
+        # 最初のログイン窓が出るまで待機
+        WebDriverWait(driver, 20).until(lambda d: len(d.window_handles) > 1)
+        driver.switch_to.window(driver.window_handles[-1])
+        time.sleep(5)
 
-        # --- 手順2: ログイン実行 (JS関数直接叩き) ---
-        login_triggered = False
-        for handle in driver.window_handles:
-            driver.switch_to.window(handle)
-            frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
-            for f in frames:
-                try:
-                    if f: driver.switch_to.frame(f)
-                    inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='password'], input[type='tel']")
-                    if len(inputs) >= 2:
-                        log(f"⌨️ ID/PWをセット中...")
-                        driver.execute_script("arguments[0].value = arguments[1];", inputs[0], JKK_ID)
-                        driver.execute_script("arguments[0].value = arguments[1];", inputs[1], JKK_PASSWORD)
-                        
-                        # 重要：サイト独自の submitNext() 関数を直接実行してログインを強行する
-                        log("🚀 submitNext() を直接実行してログインします")
-                        driver.execute_script("submitNext();")
-                        login_triggered = True; break
-                except: continue
-                driver.switch_to.default_content()
-            if login_triggered: break
+        # --- 手順2: ログイン実行 ---
+        log("⌨️ ID/PWをセット中...")
+        found_form = False
+        frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
+        for f in frames:
+            try:
+                if f: driver.switch_to.frame(f)
+                inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='password'], input[type='tel']")
+                if len(inputs) >= 2:
+                    driver.execute_script("arguments[0].value = arguments[1];", inputs[0], JKK_ID)
+                    driver.execute_script("arguments[0].value = arguments[1];", inputs[1], JKK_PASSWORD)
+                    
+                    current_handles = set(driver.window_handles)
+                    log("🚀 submitNext() を実行します")
+                    driver.execute_script("submitNext();")
+                    found_form = True; break
+            except: continue
+            driver.switch_to.default_content()
 
-        log("⏳ マイページ展開を待機 (40秒)...")
-        time.sleep(40)
+        # --- 重要：新しいウィンドウ（マイページ）が開くのを待つ ---
+        log("⏳ マイページウィンドウの出現を待機中...")
+        new_window_found = False
+        for _ in range(20): # 最大40秒
+            if len(driver.window_handles) > len(current_handles):
+                new_window_found = True
+                new_handle = (set(driver.window_handles) - current_handles).pop()
+                driver.switch_to.window(new_handle)
+                log("🔄 新しいマイページウィンドウに切り替えました")
+                break
+            time.sleep(2)
 
-        # --- 第1ゴール: 「条件から検索」ボタンを全探索 ---
-        log("🔍 第1ゴール: ボタンを探索中...")
+        log("⏳ コンテンツの読み込み待ち（15秒）...")
+        time.sleep(15)
+
+        # --- 第1ゴール: 「条件から検索」を探索 ---
+        log("🔍 第1ゴール: 「条件から検索」ボタンを全フレーム探索")
         found_btn = False
-        # ログイン後はウィンドウが増えるので、新しい順にチェック
-        for handle in reversed(driver.window_handles):
-            driver.switch_to.window(handle)
-            frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
-            for f in frames:
-                try:
-                    if f: driver.switch_to.frame(f)
-                    # ピンク色の「条件から検索」ボタンを探す
-                    btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
-                    if btns:
-                        log("🎯 ボタン発見！第1ゴール突破のためクリックします")
-                        driver.execute_script("arguments[0].click();", btns[0])
-                        found_btn = True; break
-                except: continue
-                driver.switch_to.default_content()
-            if found_btn: break
+        # マイページもiframe構造なので全走査
+        frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
+        for f in frames:
+            try:
+                if f: driver.switch_to.frame(f)
+                btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
+                if btns:
+                    log("🎯 ボタン発見！第1ゴールを突破します")
+                    driver.execute_script("arguments[0].click();", btns[0])
+                    found_btn = True; break
+            except: continue
+            driver.switch_to.default_content()
 
         if found_btn:
             time.sleep(10)
             driver.save_screenshot("goal_1_success.png")
-            log("✨ 第1ゴール突破！！ 世田谷区が選べる画面に到着しました")
+            log("✨ 第1ゴール突破！！ 次は世田谷区の選択へ進みます")
         else:
-            driver.save_screenshot("goal_1_failed_final.png")
-            log("❌ 第1ゴール失敗。マイページへの遷移が確認できません")
+            # 失敗時のデバッグ：今見ているウィンドウのURLとタイトルを出す
+            log(f"❌ 失敗時のURL: {driver.current_url}")
+            driver.save_screenshot("goal_1_failed_last_resort.png")
+            log("❌ 第1ゴール失敗。ウィンドウ切り替えがうまくいっていない可能性があります")
 
     except Exception as e:
         log(f"⚠️ エラー: {e}")
     finally:
         driver.quit()
-
-if __name__ == "__main__":
-    main()
