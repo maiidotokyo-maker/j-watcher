@@ -30,67 +30,66 @@ def main():
         driver.switch_to.window(driver.window_handles[-1])
         time.sleep(5)
 
-        log("⌨️ 手順2: ログイン入力 & ボタンクリック")
-        # 入力欄を埋める
+        log("⌨️ 手順2: ログイン入力")
         inputs = driver.find_elements(By.TAG_NAME, "input")
         fields = [i for i in inputs if i.is_displayed() and i.get_attribute("type") in ["text", "password", "tel"]]
+        
         if len(fields) >= 2:
             driver.execute_script("arguments[0].value = arguments[1];", fields[0], JKK_ID)
             driver.execute_script("arguments[0].value = arguments[1];", fields[1], JKK_PASSWORD)
-            log("✅ 入力完了")
+            log("✅ 入力完了。ボタンをクリックします...")
             
-            # 青いログインボタンを画像名で特定してクリック
-            login_imgs = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]")
-            if login_imgs:
-                driver.execute_script("arguments[0].click();", login_imgs[0])
-                log("🚀 ログインボタンをクリックしました")
-            else:
-                # 画像で見つからない場合は親のリンクを探す
-                driver.execute_script("submitNext();")
-        
-        log("⏳ 遷移待ち（25秒）... ここでマイページが開くのをじっくり待ちます")
-        time.sleep(25)
-        
-        # マイページが別ウィンドウで開く場合があるため、再度ハンドルを確認
-        if len(driver.window_handles) > 1:
-            driver.switch_to.window(driver.window_handles[-1])
-            log("🔄 最新ウィンドウに切り替えました")
+            try:
+                login_btn = driver.find_element(By.XPATH, "//img[contains(@src, 'btn_login')]/parent::a")
+                driver.execute_script("arguments[0].click();", login_btn)
+            except Exception as e:
+                log(f"⚠️ クリック時にエラーが出ましたが続行します: {e}")
 
-        # --- ゴール1: 「条件から検索」をクリック ---
-        log("🔍 ゴール1: 「条件から検索」ボタンを探索中")
-        
-        def try_click_search_btn():
-            driver.switch_to.default_content()
-            # 1. 直接探す
-            btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
-            if btns:
-                driver.execute_script("arguments[0].click();", btns[0])
-                return True
-            # 2. iframe内を探す
-            frames = driver.find_elements(By.TAG_NAME, "iframe")
-            for i in range(len(frames)):
-                try:
-                    driver.switch_to.default_content()
-                    driver.switch_to.frame(i)
-                    btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
-                    if btns:
-                        log(f"🎯 iframe[{i}] 内でボタンを発見")
-                        driver.execute_script("arguments[0].click();", btns[0])
-                        return True
-                except: continue
-            return False
+        # ログイン後のマイページが表示されるまで、最大40秒じっくり待ちます
+        log("⏳ マイページの出現を待機中（40秒）...")
+        start_time = time.time()
+        found_search_btn = False
 
-        if try_click_search_btn():
+        while time.time() - start_time < 40:
+            # 全ウィンドウをチェック
+            for handle in driver.window_handles:
+                driver.switch_to.window(handle)
+                # iframe内を含めて「条件から検索」ボタンを探す
+                driver.switch_to.default_content()
+                frames = driver.find_elements(By.TAG_NAME, "iframe")
+                
+                # 親フレームをまず確認
+                if driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]"):
+                    found_search_btn = True; break
+                
+                # iframe内を確認
+                for i in range(len(frames)):
+                    try:
+                        driver.switch_to.default_content()
+                        driver.switch_to.frame(i)
+                        if driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]"):
+                            found_search_btn = True; break
+                    except: continue
+                if found_search_btn: break
+            
+            if found_search_btn:
+                log("🎯 第1ゴール直前：マイページと「条件から検索」ボタンを確認しました！")
+                search_btn = driver.find_element(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
+                driver.execute_script("arguments[0].click();", search_btn)
+                break
+            time.sleep(5)
+
+        if found_search_btn:
             time.sleep(10)
             driver.save_screenshot("goal_1_success.png")
-            log("✨ 第1ゴール突破！「世田谷区」を選択する画面に到達しました")
+            log("✨ 第1ゴール突破！検索条件（世田谷区選択）画面に到達しました。")
         else:
-            driver.save_screenshot("goal_1_failed_final_check.png")
-            log("❌ 第1ゴール失敗。画面の状態を確認してください")
+            driver.save_screenshot("goal_1_failed_debug.png")
+            log("❌ 第1ゴール失敗。マイページに辿り着けませんでした。")
 
     except Exception as e:
-        log(f"⚠️ エラー: {e}")
-        driver.save_screenshot("fatal_debug.png")
+        log(f"❌ 重大なエラー: {e}")
+        driver.save_screenshot("fatal_error.png")
     finally:
         driver.quit()
 
