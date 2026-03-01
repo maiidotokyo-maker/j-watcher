@@ -25,8 +25,8 @@ def main():
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
         time.sleep(10)
 
-        # --- 手順2: ログイン実行 ---
-        login_executed = False
+        # --- 手順2: ログイン実行 (JS関数直接叩き) ---
+        login_triggered = False
         for handle in driver.window_handles:
             driver.switch_to.window(handle)
             frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
@@ -35,32 +35,25 @@ def main():
                     if f: driver.switch_to.frame(f)
                     inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='password'], input[type='tel']")
                     if len(inputs) >= 2:
-                        log(f"⌨️ ログイン情報を入力中...")
+                        log(f"⌨️ ID/PWをセット中...")
                         driver.execute_script("arguments[0].value = arguments[1];", inputs[0], JKK_ID)
                         driver.execute_script("arguments[0].value = arguments[1];", inputs[1], JKK_PASSWORD)
                         
-                        # ログインボタンを徹底的に探してクリック
-                        # 画像、リンク、またはonclick属性を持つ要素
-                        login_targets = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_login')]/parent::a | //a[contains(@onclick, 'submitNext')]")
-                        if login_targets:
-                            log("🖱 ログインボタンをJSでクリックします")
-                            driver.execute_script("arguments[0].click();", login_targets[0])
-                        else:
-                            log("⌨️ ボタンが見つからないためEnterキーで代用します")
-                            inputs[1].send_keys('\n')
-                        
-                        login_executed = True; break
+                        # 重要：サイト独自の submitNext() 関数を直接実行してログインを強行する
+                        log("🚀 submitNext() を直接実行してログインします")
+                        driver.execute_script("submitNext();")
+                        login_triggered = True; break
                 except: continue
                 driver.switch_to.default_content()
-            if login_executed: break
+            if login_triggered: break
 
-        log("⏳ マイページの展開を待ちます (35秒)")
-        time.sleep(35)
+        log("⏳ マイページ展開を待機 (40秒)...")
+        time.sleep(40)
 
-        # --- 第1ゴール: 「条件から検索」を探索 ---
-        log("🔍 第1ゴール: 「条件から検索」ボタンを探します")
+        # --- 第1ゴール: 「条件から検索」ボタンを全探索 ---
+        log("🔍 第1ゴール: ボタンを探索中...")
         found_btn = False
-        # ログイン後に新しいウィンドウが増えている可能性が高いので最新をチェック
+        # ログイン後はウィンドウが増えるので、新しい順にチェック
         for handle in reversed(driver.window_handles):
             driver.switch_to.window(handle)
             frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
@@ -70,7 +63,7 @@ def main():
                     # ピンク色の「条件から検索」ボタンを探す
                     btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
                     if btns:
-                        log(f"🎯 ボタン発見！クリックして第1ゴール突破を試みます")
+                        log("🎯 ボタン発見！第1ゴール突破のためクリックします")
                         driver.execute_script("arguments[0].click();", btns[0])
                         found_btn = True; break
                 except: continue
@@ -80,10 +73,10 @@ def main():
         if found_btn:
             time.sleep(10)
             driver.save_screenshot("goal_1_success.png")
-            log("✨ 第1ゴール突破！！ 世田谷区が選べる画面を表示させました。")
+            log("✨ 第1ゴール突破！！ 世田谷区が選べる画面に到着しました")
         else:
-            driver.save_screenshot("goal_1_failed_retry.png")
-            log("❌ 第1ゴール失敗。マイページへの遷移が確認できません。")
+            driver.save_screenshot("goal_1_failed_final.png")
+            log("❌ 第1ゴール失敗。マイページへの遷移が確認できません")
 
     except Exception as e:
         log(f"⚠️ エラー: {e}")
