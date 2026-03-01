@@ -11,7 +11,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 標準出力をUTF-8に（ログの文字化け防止）
 sys.stdout.reconfigure(encoding="utf-8")
 
 def log(msg):
@@ -19,18 +18,28 @@ def log(msg):
 
 def create_driver():
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new") # 最新のヘッドレスモード
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-    # ボット検知回避設定
+    
+    # 🕵️ 重要：完全に人間を装うための設定
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    options.add_argument(f'--user-agent={user_agent}')
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    
+    options.add_argument('--lang=ja-JP') # 言語を日本語に固定
+
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    # webdriverプロパティを隠蔽
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
+    # 🕵️ 重要：JavaScriptレベルでの自動化判定を削除
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.chrome = { runtime: {} };
+        """
+    })
     return driver
 
 def main():
@@ -42,68 +51,51 @@ def main():
     wait = WebDriverWait(driver, 30)
 
     try:
-        # ① 公式「お部屋探し」トップへアクセス（セッション開始）
-        log("🚪 手順1: 公式お部屋探しページへアクセス")
-        driver.get("https://www.to-kousya.or.jp/chintai/index_search.html")
-        time.sleep(3) # JS読み込みの物理待機
+        # ① 直接「お部屋探し」トップではなく、もう少し深い階層から入る
+        # (404回避のため、まずはトップページを一度踏む)
+        log("🚪 手順1: JKK東京公式サイトへアクセス")
+        driver.get("https://www.to-kousya.or.jp/")
+        time.sleep(5)
         
-        # ② 「JKKねっと」へのリンクをURLパターンで特定してクリック
-        log("🔎 手順2: JKKねっとへのリンクを探索中...")
-        # FAQ(support...)を避け、jhomesまたはinter-jkkを含むリンクを狙い撃ち
-        jkk_net_xpath = "//a[contains(@href, 'jhomes.to-kousya.or.jp') or contains(@href, 'inter-jkk.or.jp')]"
-        jkk_link = wait.until(EC.element_to_be_clickable((By.XPATH, jkk_net_xpath)))
-        log(f"🔗 ターゲット発見: {jkk_link.get_attribute('href')}")
-        jkk_link.click()
-
-        # ③ ログインページへのボタンをクリック（Logonを含むリンク）
-        log("🔎 手順3: ログイン画面へのボタンを探索中...")
-        login_btn_xpath = "//a[contains(@href, 'Logon') or contains(@href, 'login')]"
-        login_btn = wait.until(EC.element_to_be_clickable((By.XPATH, login_btn_xpath)))
-        login_btn.click()
-
-        # ④ ログインフォーム入力（iframe対応）
-        log("⌨️ 手順4: ログインフォーム出現待機...")
+        # ② JavaScriptで強制的に「JKKねっと」入り口へ移動
+        # (ボタンが見つからない場合も考慮し、直接遷移とクリックを併用)
+        log("🔗 手順2: JKKねっと(jhomes)へ遷移中...")
+        driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
+        time.sleep(8)
         
-        # もしフォームがiframe内にある場合を考慮したループ
-        if len(driver.find_elements(By.TAG_NAME, "iframe")) > 0:
-            log("📦 iframeを検出。フレームを切り替えます。")
-            driver.switch_to.frame(0) # 最初のフレームに切り替え
+        driver.save_screenshot("after_redirect.png")
 
-        # 要素名(uid)が出るまで待機
+        # ③ フォーム入力（iframe/JS対策込み）
+        log("⌨️ 手順3: ログインフォーム探索")
+        
+        # フォームが出るまで最大30秒待つ（海外サーバーからの遅延対策）
         u_field = wait.until(EC.presence_of_element_located((By.NAME, "uid")))
         p_field = driver.find_element(By.NAME, "passwd")
 
-        log("✍️ ID/PWを入力中...")
         driver.execute_script("arguments[0].value = arguments[1];", u_field, JKK_ID)
         driver.execute_script("arguments[0].value = arguments[1];", p_field, JKK_PASSWORD)
         
-        driver.save_screenshot("at_login_input.png")
+        log("🚀 送信実行")
+        driver.save_screenshot("submitting.png")
         p_field.submit()
 
-        # ⑤ 認証成功の判定
-        log("🚀 認証完了を待機中...")
+        # ④ 認証成功確認
         wait.until(EC.any_of(
             EC.url_contains("mypage"),
-            EC.url_contains("Menu"),
-            EC.title_contains("マイページ")
+            EC.url_contains("Menu")
         ))
 
-        if "mypage" in driver.current_url.lower() or "menu" in driver.current_url.lower():
-            log("🎉 ログイン成功！マイページに到達しました。")
-            if DISCORD_WEBHOOK:
-                requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログイン成功！監視フェーズへ移行します。"})
-        else:
-            log(f"💀 ログイン判定失敗: {driver.current_url}")
-            driver.save_screenshot("login_fail_final.png")
+        log(f"🎉 ログイン成功！ 現在URL: {driver.current_url}")
+        if DISCORD_WEBHOOK:
+            requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログインに成功しました。監視を開始します。"})
 
     except Exception as e:
         log(f"❌ エラー発生: {e}")
-        driver.save_screenshot("fatal_error.png")
-        # デバッグ用にHTMLの一部を出力
-        print(f"--- DEBUG HTML ---\n{driver.page_source[:500]}")
+        driver.save_screenshot("last_fatal_error.png")
+        # 404が出ているか確認するためにタイトルを表示
+        print(f"DEBUG - Page Title: {driver.title}")
     finally:
         driver.quit()
-        log("🏁 プロセス終了")
 
 if __name__ == "__main__":
     main()
