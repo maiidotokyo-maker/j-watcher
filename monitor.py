@@ -11,92 +11,92 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-sys.stdout.reconfigure(encoding="utf-8")
-
-def log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
 def create_driver():
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # 解像度を上げてPCレイアウトを強制
     options.add_argument("--window-size=1920,1080")
     
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    options.add_argument(f'--user-agent={user_agent}')
+    # 🕵️ 重要：より人間らしいUser-Agentと各種偽装
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    options.add_argument(f'--user-agent={ua}')
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    # 🛡️ webdriverプロパティを削除してボット検知を回避
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', {get: () => ['ja-JP', 'ja']});
+        """
     })
     return driver
 
 def main():
-    JKK_ID = os.environ.get("JKK_ID")
-    JKK_PASSWORD = os.environ.get("JKK_PASSWORD")
-    DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL")
-
     driver = create_driver()
     wait = WebDriverWait(driver, 30)
 
     try:
-        # 1. トップページで正規Cookieを取得
-        log("🚪 手順1: トップページへアクセス（Cookie取得）")
+        # 手順1: トップから正規Cookie取得
+        log("🚪 手順1: トップページへアクセス")
         driver.get("https://www.to-kousya.or.jp/")
         time.sleep(5)
-        
-        # 2. ログインページへ直接ジャンプ（リファラを維持）
-        log("🔗 手順2: ログインページへ直接遷移")
+
+        # 手順2: ログインページへ（JS遷移ではなく、クリックを模倣）
+        log("🔗 手順2: ログインページへ遷移")
+        # 直接URL指定が弾かれている可能性があるため、再度トップからの物理クリックを試行（JS使用）
         driver.execute_script("window.location.href = 'https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu';")
         
-        # JSロードと画面描画を十分に待つ（真っ白画面対策）
-        log("⏳ JSロード待機中（20秒）...")
-        time.sleep(20)
-        driver.save_screenshot("debug_login_page.png")
+        # ロード時間をさらに長くし、画面内をスクロールして「人間」を装う
+        log("⏳ ロード待機 + 擬似操作中...")
+        for _ in range(3):
+            time.sleep(10)
+            driver.execute_script("window.scrollBy(0, 100);")
+        
+        driver.save_screenshot("debug_login_check.png")
 
-        # 3. iframe探索とフォーム入力
+        # 📄 デバッグ：現在のHTML構造を詳しくログ出力
+        page_content = driver.page_source
+        if "iframe" not in page_content.lower():
+            log("⚠️ 警告: iframeタグ自体がページ内に存在しません。JSがブロックされた可能性があります。")
+            print(f"DEBUG HTML SNIPPET: {page_content[1000:2000]}") # 中央付近を抽出
+
+        # 手順3: iframe探索
         log("⌨️ 手順3: ログインフォームを探索")
         frames = driver.find_elements(By.TAG_NAME, "iframe")
-        found = False
+        log(f"発見されたiframe数: {len(frames)}")
 
         for i, frame in enumerate(frames):
             driver.switch_to.frame(frame)
             try:
-                # 10秒待機して uid 入力欄を探す
-                u_field = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, "uid")))
+                # presenceではなく、より強い判定「visibility」を使用
+                u_field = WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.NAME, "uid")))
+                log(f"✅ iframe[{i}] 内でログインフォームを表示確認")
+                
+                driver.execute_script("arguments[0].value = arguments[1];", u_field, os.environ.get("JKK_ID"))
                 p_field = driver.find_element(By.NAME, "passwd")
+                driver.execute_script("arguments[0].value = arguments[1];", p_field, os.environ.get("JKK_PASSWORD"))
                 
-                log(f"✅ iframe[{i}] 内にフォームを発見")
-                driver.execute_script("arguments[0].value = arguments[1];", u_field, JKK_ID)
-                driver.execute_script("arguments[0].value = arguments[1];", p_field, JKK_PASSWORD)
-                
+                driver.save_screenshot("debug_submitting.png")
                 p_field.submit()
-                found = True
-                break
+                
+                # ログイン後の成功確認
+                wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'マイページ')]")))
+                log("🎉 ログイン成功！")
+                return
             except:
                 driver.switch_to.default_content()
 
-        if not found:
-            raise Exception("ログインフォームが見つかりませんでした。")
-
-        # 4. 成功判定
-        log("🚀 認証結果を確認中...")
-        wait.until(EC.any_of(
-            EC.url_contains("mypage"),
-            EC.title_contains("マイページ")
-        ))
-        
-        log("🎉 ログイン成功！")
-        if DISCORD_WEBHOOK:
-            requests.post(DISCORD_WEBHOOK, json={"content": "✅ ログインに成功しました。監視を継続します。"})
+        raise Exception("ログインフォームの描画に失敗しました。")
 
     except Exception as e:
-        log(f"❌ エラー発生: {e}")
-        driver.save_screenshot("final_error_report.png")
+        log(f"❌ エラー: {e}")
+        driver.save_screenshot("final_error.png")
     finally:
         driver.quit()
 
