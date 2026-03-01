@@ -20,6 +20,9 @@ def create_driver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-popup-blocking")
+    # 念のため自動操作フラグを隠蔽
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     return driver
@@ -29,74 +32,67 @@ def main():
     JKK_PASSWORD = os.environ.get("JKK_PASSWORD")
     
     driver = create_driver()
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 15)
     
     try:
         log("🚪 手順1: ログイン開始ページへアクセス")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
         
-        # 🔄 ウィンドウ切り替え
-        log("⏳ 新しいウィンドウの生成を待機中...")
+        # ウィンドウ切り替え
         wait.until(lambda d: len(d.window_handles) > 1)
         driver.switch_to.window(driver.window_handles[-1])
         log("🔄 新しいウィンドウに切り替え完了")
         
-        # フォーム描画待ち
-        time.sleep(5)
+        time.sleep(7) # 描画を待機
         
-        # ⌨️ iframeの探索とスイッチ
         log("⌨️ 手順3: ログインフォームを探索")
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
         frames = driver.find_elements(By.TAG_NAME, "iframe")
         log(f"発見されたiframe数: {len(frames)}")
 
         found = False
         for i, frame in enumerate(frames):
+            log(f"🔎 iframe[{i}] をチェック中...")
             driver.switch_to.frame(frame)
+            
             try:
-                # uidが見えるまで最大15秒待機
-                u_field = WebDriverWait(driver, 15).until(
-                    EC.visibility_of_element_located((By.NAME, "uid"))
-                )
-                p_field = driver.find_element(By.NAME, "passwd")
+                # 戦略1: input要素をすべて取得して、type="text" と type="password" に流し込む
+                inputs = driver.find_elements(By.TAG_NAME, "input")
+                text_fields = [i for i in inputs if i.get_attribute("type") in ["text", "password"]]
                 
-                log(f"✅ iframe[{i}] 内でログインフォームを特定しました。")
-                
-                # 入力と送信
-                driver.execute_script("arguments[0].value = arguments[1];", u_field, JKK_ID)
-                driver.execute_script("arguments[0].value = arguments[1];", p_field, JKK_PASSWORD)
-                
-                driver.save_screenshot("debug_before_submit.png")
-                
-                # ログインボタンをクリック（またはformをsubmit）
-                try:
-                    login_btn = driver.find_element(By.XPATH, "//img[contains(@src, 'btn_login') or @alt='ログイン']/parent::a")
-                    login_btn.click()
-                except:
-                    p_field.submit()
-                
-                found = True
-                break
+                if len(text_fields) >= 2:
+                    log(f"✅ iframe[{i}] 内に入力フィールドを発見しました。")
+                    # JavaScriptで確実に値をセット
+                    driver.execute_script("arguments[0].value = arguments[1];", text_fields[0], JKK_ID)
+                    driver.execute_script("arguments[0].value = arguments[1];", text_fields[1], JKK_PASSWORD)
+                    
+                    driver.save_screenshot("debug_filling.png")
+                    
+                    # ログインボタン（青いボタン）を探してクリック
+                    try:
+                        login_btn = driver.find_element(By.XPATH, "//a[contains(@onclick, 'login') or .//img[contains(@src, 'btn_login')]]")
+                        login_btn.click()
+                    except:
+                        text_fields[1].submit()
+                        
+                    found = True
+                    break
             except Exception as e:
-                driver.switch_to.default_content()
+                log(f"   iframe[{i}] 内でエラー: {e}")
+            
+            driver.switch_to.default_content()
 
         if not found:
-            raise Exception("ログインフィールドが見つかりませんでした。")
+            raise Exception("ログインフォームの入力フィールドを特定できませんでした。")
 
-        # 🎉 最終確認
-        log("🚀 ログイン処理中...")
+        # 最終確認
+        log("🚀 ログイン処理の完了を待機中...")
         time.sleep(10)
-        driver.save_screenshot("debug_after_login.png")
-        log(f"最終URL: {driver.current_url}")
-
-        if "mypage" in driver.current_url.lower():
-            log("🎉 ログイン成功！")
-        else:
-            log("⚠️ ログイン後のURLがマイページではありません。")
+        driver.save_screenshot("debug_final_result.png")
+        log(f"現在のURL: {driver.current_url}")
 
     except Exception as e:
         log(f"❌ エラー発生: {e}")
-        driver.save_screenshot("fatal_error.png")
+        driver.save_screenshot("final_fatal_error.png")
     finally:
         driver.quit()
         log("🏁 プロセス終了")
