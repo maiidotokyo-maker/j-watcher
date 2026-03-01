@@ -5,7 +5,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 def log(msg):
@@ -18,90 +17,76 @@ def main():
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-    # ポップアップとJSの実行を安定させる設定
     options.add_argument("--disable-popup-blocking")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        log("🚪 手順1: サイトへアクセス")
+        log("🚪 手順1: ログイン開始")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
+        time.sleep(5)
         
-        # ログイン窓が開くのを待機
-        WebDriverWait(driver, 20).until(lambda d: len(d.window_handles) > 1)
+        # ログイン窓特定
+        WebDriverWait(driver, 15).until(lambda d: len(d.window_handles) > 1)
         driver.switch_to.window(driver.window_handles[-1])
+        
+        # ID/PW入力と送信
+        current_handles = set(driver.window_handles)
+        driver.execute_script("""
+            var f = document.getElementsByTagName('iframe')[0].contentDocument;
+            f.getElementsByName('user_id')[0].value = '""" + JKK_ID + """';
+            f.getElementsByName('password')[0].value = '""" + JKK_PASSWORD + """';
+            f.defaultView.submitNext();
+        """)
+        
+        log("⏳ マイページ移動中...")
+        time.sleep(10)
+        new_handle = (set(driver.window_handles) - current_handles).pop()
+        driver.switch_to.window(new_handle)
+        driver.refresh()
         time.sleep(5)
 
-        # --- 手順2: ログイン実行 ---
-        log("⌨️ ログイン情報をセット中...")
-        current_handles = set(driver.window_handles)
+        # 第一ゴール：検索条件ボタンクリック
+        log("🔍 第1ゴール：検索条件ボタンをクリック")
+        driver.execute_script("""
+            var f = document.getElementsByTagName('iframe')[0].contentDocument;
+            var btn = f.querySelector("img[src*='btn_search_cond']").parentElement;
+            btn.click();
+        """)
+        time.sleep(10)
+
+        # --- 🚀 ここから第2ゴール：世田谷区を選択 ---
+        log("📍 第2ゴール：世田谷区を選択して検索します")
         
-        # iframeを巡回して入力
-        frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
-        for f in frames:
-            try:
-                if f: driver.switch_to.frame(f)
-                inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='password'], input[type='tel']")
-                if len(inputs) >= 2:
-                    driver.execute_script("arguments[0].value = arguments[1];", inputs[0], JKK_ID)
-                    driver.execute_script("arguments[0].value = arguments[1];", inputs[1], JKK_PASSWORD)
-                    log("🚀 submitNext() を実行します")
-                    driver.execute_script("submitNext();")
-                    break
-            except: continue
-            driver.switch_to.default_content()
-
-        # --- 重要：新しいマイページウィンドウを捕まえる ---
-        log("⏳ 新しいウィンドウの生成を監視中...")
-        target_handle = None
-        for _ in range(30): # 最大60秒
-            new_handles = set(driver.window_handles) - current_handles
-            if new_handles:
-                target_handle = list(new_handles)[0]
-                driver.switch_to.window(target_handle)
-                log("🔄 新ウィンドウを検知。フォーカスを移動しました")
-                break
-            time.sleep(2)
-
-        # 真っ白な画面対策：ロードが完了するまで最大30秒待機
-        log("⏳ マイページの内容が表示されるまで待機...")
-        found_search_btn = False
-        for i in range(10):
-            # 全フレームを再走査
-            driver.switch_to.default_content()
-            all_frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
-            for f in all_frames:
-                try:
-                    if f: driver.switch_to.frame(f)
-                    btns = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
-                    if btns:
-                        log("🎯 「条件から検索」ボタンを発見！")
-                        driver.execute_script("arguments[0].click();", btns[0])
-                        found_search_btn = True; break
-                except: continue
-                driver.switch_to.default_content()
-            
-            if found_search_btn: break
-            
-            # 画面が真っ白な場合のリカバリ：途中で1回だけリフレッシュを試みる
-            if i == 3 and not found_search_btn:
-                log("🔄 画面が白いままのため、強制リフレッシュを試みます...")
-                driver.refresh()
-            
-            time.sleep(5)
-
-        if found_search_btn:
-            time.sleep(10)
-            driver.save_screenshot("goal_1_success.png")
-            log("✨ 第1ゴール突破！！ 世田谷区が選べる画面に到達しました。")
-        else:
-            driver.save_screenshot("goal_1_failed_final.png")
-            log(f"❌ 最終URL: {driver.current_url}")
-            log("❌ 第1ゴール失敗。マイページの内容が取得できませんでした。")
+        # 世田谷区(112)のチェックボックスを探してクリック
+        # サイト構造に合わせてJavaScriptで確実に操作
+        driver.execute_script("""
+            var f = document.getElementsByTagName('iframe')[0].contentDocument;
+            // 世田谷区のチェックボックス(値が112のもの)をチェック
+            var setagaya = f.querySelector("input[type='checkbox'][value='112']");
+            if(setagaya) {
+                setagaya.checked = true;
+                console.log("Setagaya Checked");
+            }
+            // 検索ボタン(btn_search_start)をクリック
+            var searchBtn = f.querySelector("img[src*='btn_search_start']").parentElement;
+            searchBtn.click();
+        """)
+        
+        log("⏳ 検索結果の表示を待っています...")
+        time.sleep(15)
+        
+        # 最終確認用のスクリーンショット
+        driver.save_screenshot("search_result.png")
+        log("✨ 検索完了！『search_result.png』を確認してください。")
 
     except Exception as e:
         log(f"⚠️ エラー: {e}")
+        driver.save_screenshot("error_debug.png")
     finally:
         driver.quit()
+
+if __name__ == "__main__":
+    from selenium.webdriver.support.ui import WebDriverWait
+    main()
