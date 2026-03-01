@@ -1,7 +1,6 @@
 import os
 import sys
 import requests
-import time
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -24,7 +23,7 @@ def create_driver():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     
-    # アンチ・ボット設定
+    # アンチ・ボット設定（これだけは「おわび」回避に必須なので残します）
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
@@ -39,42 +38,43 @@ def main():
     DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL")
 
     driver = create_driver()
-    wait = WebDriverWait(driver, 25)
+    wait = WebDriverWait(driver, 30) # CI環境の遅延を考慮して30秒
 
     try:
         # 手順1: 公式トップ
         log("🚪 手順1: 公式トップへアクセス")
         driver.get("https://www.to-kousya.or.jp/")
 
-        # 手順2: JKKねっとリンクをJSで強制クリック
-        log("🌉 手順2: JKKねっとリンクを同一タブで展開(JS強制)")
-        # リンクが見つかるまで待機
-        jkk_link = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'jkk') or contains(text(),'JKK')]")))
-        
-        # 画面内にスクロール ＋ target解除 ＋ 強制クリック
-        driver.execute_script("""
-            arguments[0].scrollIntoView(true);
-            arguments[0].setAttribute('target', '_self');
-            arguments[0].click();
-        """, jkk_link)
+        # 手順2: JKKねっとリンクを物理クリック
+        log("🌉 手順2: JKKねっとリンクを物理クリック")
+        # 確実に「クリック可能」になるまで待つ（User案）
+        jkk_link = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@href,'jkk')]")))
+        current_handles = len(driver.window_handles)
+        jkk_link.click()
 
-        # 手順3: ログインリンクをJSで強制クリック
-        log("🔑 手順3: ログインボタンを同一タブで展開(JS強制)")
-        login_link = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'login') or contains(text(),'ログイン')]")))
-        
-        driver.execute_script("""
-            arguments[0].scrollIntoView(true);
-            arguments[0].setAttribute('target', '_self');
-            arguments[0].click();
-        """, login_link)
+        # ウィンドウが増えるのを待って切替（User案）
+        wait.until(lambda d: len(d.window_handles) > current_handles)
+        driver.switch_to.window(driver.window_handles[-1])
+        log(f"📑 JKKページ到達: {driver.title}")
+
+        # 手順3: ログインリンクを物理クリック
+        log("🔑 手順3: ログインリンクを物理クリック")
+        login_link = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(@href,'login')]")))
+        current_handles = len(driver.window_handles)
+        login_link.click()
+
+        # 再びウィンドウが増えるのを待って切替
+        wait.until(lambda d: len(d.window_handles) > current_handles)
+        driver.switch_to.window(driver.window_handles[-1])
+        log(f"📑 ログイン画面到達: {driver.title}")
 
         # 手順4: ログインフォーム入力
-        log("⌨️ 手順4: ログインフォーム待機...")
+        log("⌨️ 手順4: ログインフォーム入力")
         
         def fill_form(d):
-            # メイン画面と全フレームを探索
             targets = [d]
             try:
+                # フレーム探索
                 frames = d.find_elements(By.TAG_NAME, "frame") + d.find_elements(By.TAG_NAME, "iframe")
                 targets.extend(frames)
             except: pass
@@ -82,11 +82,11 @@ def main():
             for t in targets:
                 if t != d: d.switch_to.frame(t)
                 try:
+                    # ここも clickable で待つべきだが、NAME属性は presence で十分なことが多い
                     u = d.find_element(By.NAME, "uid")
                     p = d.find_element(By.NAME, "passwd")
-                    # 入力も念のためJSで行う（確実性アップ）
-                    d.execute_script("arguments[0].value = arguments[1];", u, JKK_ID)
-                    d.execute_script("arguments[0].value = arguments[1];", p, JKK_PASSWORD)
+                    u.send_keys(JKK_ID)
+                    p.send_keys(JKK_PASSWORD)
                     p.submit()
                     return True
                 except:
@@ -94,10 +94,10 @@ def main():
             return False
 
         wait.until(fill_form)
-        log("🚀 ログイン情報を送信")
+        log("🚀 ログイン情報を送信完了")
 
         # 手順5: 成功判定
-        log("🏁 最終成否判定中...")
+        log("🏁 成否判定中...")
         wait.until(EC.any_of(
             EC.url_contains("mypage"),
             EC.url_contains("menu"),
@@ -108,9 +108,9 @@ def main():
         log(f"📍 最終URL: {final_url}")
         
         if "mypage" in final_url or "menu" in final_url:
-            log("🎉 ログイン成功！JS強制クリックによる物理制約の突破です。")
+            log("🎉 ログイン成功！正攻法の物理クリックが勝利しました。")
             if DISCORD_WEBHOOK:
-                requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログイン成功（JS強制クリック版）"})
+                requests.post(DISCORD_WEBHOOK, json={"content": "✅ JKKログイン成功（物理クリック・安定版）"})
         else:
             log(f"💀 失敗: {driver.title}")
 
