@@ -8,18 +8,9 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
-import requests
-
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
-def send_discord(message):
-    if not DISCORD_WEBHOOK_URL: return
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": message}).raise_for_status()
-    except: pass
 
 def main():
     JKK_ID = os.environ.get("JKK_ID")
@@ -36,51 +27,49 @@ def main():
         log("🚪 手順1: ログイン開始")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
         
-        # 1. ログイン窓へ移動
-        WebDriverWait(driver, 20).until(lambda d: len(d.window_handles) > 1)
+        # 1. ログイン窓特定
+        WebDriverWait(driver, 30).until(lambda d: len(d.window_handles) > 1)
         driver.switch_to.window(driver.window_handles[-1])
         
-        # 2. 強制注入
-        log("⌨️ ID/PW注入...")
+        # 2. iframeに入って、物理的に入力
+        log("⌨️ ID/PWを入力中...")
+        wait = WebDriverWait(driver, 20)
+        wait.until(EC.frame_to_be_available_and_switch_to_it((By.TAG_NAME, "iframe")))
+        
+        user_field = wait.until(EC.element_to_be_clickable((By.NAME, "user_id")))
+        pass_field = driver.find_element(By.NAME, "password")
+        
+        user_field.clear()
+        user_field.send_keys(JKK_ID)
+        pass_field.clear()
+        pass_field.send_keys(JKK_PASSWORD)
+        
+        # 3. 物理クリックによる送信
+        log("🚀 ログインボタンを物理クリックします")
         current_handles = set(driver.window_handles)
-        bomb_script = """
-        function inject(doc) {
-            var u = doc.getElementsByName('user_id')[0];
-            var p = doc.getElementsByName('password')[0];
-            if(u && p) {
-                u.value = arguments[0];
-                p.value = arguments[1];
-                doc.defaultView.submitNext();
-                return true;
-            }
-            return false;
-        }
-        inject(document);
-        var fs = document.getElementsByTagName('iframe');
-        for(var i=0; i<fs.length; i++) { try { inject(fs[i].contentDocument); } catch(e) {} }
-        """
-        driver.execute_script(bomb_script, JKK_ID, JKK_PASSWORD)
+        login_btn = driver.find_element(By.XPATH, "//a[contains(@onclick, 'submitNext')]")
+        driver.execute_script("arguments[0].click();", login_btn)
 
-        # 3. 【重要】ログイン後に開く「真のマイページ窓」を捕まえる
-        log("⏳ マイページへの遷移を監視...")
+        # 4. ログイン後の新ウィンドウを捕まえる
+        log("⏳ マイページ出現を待機...")
         target_handle = None
         for _ in range(20):
             new_handles = set(driver.window_handles) - current_handles
             if new_handles:
                 target_handle = list(new_handles)[0]
                 driver.switch_to.window(target_handle)
+                log("🔄 新ウィンドウに移動しました")
                 break
             time.sleep(2)
         
-        # 4. 真っ白画面対策：リフレッシュ
-        log("🔄 画面描画を強制リフレッシュ...")
-        time.sleep(5)
-        driver.refresh()
-        time.sleep(5)
+        # 重要：真っ白画面対策として30秒間じっくり待機
+        log("⏳ 描画が安定するまで30秒待機します（リフレッシュなし）...")
+        time.sleep(30)
 
-        # 5. 第1ゴール：条件から検索ボタンをクリック
+        # 5. 第1ゴール：条件から検索ボタンを探索
         log("🔍 「条件から検索」を探索...")
         found = False
+        # マイページもiframe構造の可能性があるため全探索
         driver.switch_to.default_content()
         frames = [None] + driver.find_elements(By.TAG_NAME, "iframe")
         for f in frames:
@@ -88,19 +77,19 @@ def main():
                 if f: driver.switch_to.frame(f)
                 btn = driver.find_elements(By.XPATH, "//img[contains(@src, 'btn_search_cond')]/parent::a")
                 if btn:
+                    log("🎯 ボタン発見！クリックします")
                     driver.execute_script("arguments[0].click();", btn[0])
                     found = True; break
             except: continue
             driver.switch_to.default_content()
 
         if found:
-            time.sleep(5)
+            time.sleep(10)
             driver.save_screenshot("goal_1_success.png")
             log("✨ 第1ゴール突破！世田谷区の選択画面へ到達しました。")
-            send_discord("✅ 第1ゴール突破！世田谷区の選択画面に到達しました。")
         else:
-            driver.save_screenshot("failed_at_goal_1.png")
-            log("❌ 第1ゴール失敗。画面がまだ読み込まれていない可能性があります。")
+            driver.save_screenshot("debug_mypage.png")
+            log(f"❌ 失敗。現在のURL: {driver.current_url}")
 
     except Exception as e:
         log(f"⚠️ エラー: {e}")
