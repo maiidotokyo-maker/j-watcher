@@ -5,6 +5,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def log(msg):
@@ -18,75 +20,52 @@ def main():
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-popup-blocking")
     
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        log("🚪 手順1: ログイン開始")
+        log("🚪 手順1: サイトへアクセス")
         driver.get("https://jhomes.to-kousya.or.jp/search/jkknet/service/mypageMenu")
-        time.sleep(5)
         
-        # ログイン窓特定
-        WebDriverWait(driver, 15).until(lambda d: len(d.window_handles) > 1)
+        # 1. ログイン用の別窓が開くのを待つ
+        WebDriverWait(driver, 20).until(lambda d: len(d.window_handles) > 1)
         driver.switch_to.window(driver.window_handles[-1])
-        
-        # ID/PW入力と送信
-        current_handles = set(driver.window_handles)
-        driver.execute_script("""
-            var f = document.getElementsByTagName('iframe')[0].contentDocument;
-            f.getElementsByName('user_id')[0].value = '""" + JKK_ID + """';
-            f.getElementsByName('password')[0].value = '""" + JKK_PASSWORD + """';
-            f.defaultView.submitNext();
-        """)
-        
-        log("⏳ マイページ移動中...")
-        time.sleep(10)
-        new_handle = (set(driver.window_handles) - current_handles).pop()
-        driver.switch_to.window(new_handle)
-        driver.refresh()
-        time.sleep(5)
+        log("🪟 ログインウィンドウへ切り替え完了")
 
-        # 第一ゴール：検索条件ボタンクリック
-        log("🔍 第1ゴール：検索条件ボタンをクリック")
-        driver.execute_script("""
-            var f = document.getElementsByTagName('iframe')[0].contentDocument;
-            var btn = f.querySelector("img[src*='btn_search_cond']").parentElement;
-            btn.click();
-        """)
-        time.sleep(10)
+        # 2. iframeの中身が読み込まれるまで待機
+        # ログインフォームがあるiframeを特定して入る
+        wait = WebDriverWait(driver, 20)
+        wait.until(EC.frame_to_be_available_and_switch_to_it((By.TAG_NAME, "iframe")))
+        log("🖼️ iframe内へ潜入成功")
 
-        # --- 🚀 ここから第2ゴール：世田谷区を選択 ---
-        log("📍 第2ゴール：世田谷区を選択して検索します")
+        # 3. ID入力欄が見えるまで待ってから入力
+        user_input = wait.until(EC.visibility_of_element_located((By.NAME, "user_id")))
+        pass_input = driver.find_element(By.NAME, "password")
         
-        # 世田谷区(112)のチェックボックスを探してクリック
-        # サイト構造に合わせてJavaScriptで確実に操作
-        driver.execute_script("""
-            var f = document.getElementsByTagName('iframe')[0].contentDocument;
-            // 世田谷区のチェックボックス(値が112のもの)をチェック
-            var setagaya = f.querySelector("input[type='checkbox'][value='112']");
-            if(setagaya) {
-                setagaya.checked = true;
-                console.log("Setagaya Checked");
-            }
-            // 検索ボタン(btn_search_start)をクリック
-            var searchBtn = f.querySelector("img[src*='btn_search_start']").parentElement;
-            searchBtn.click();
-        """)
+        log("⌨️ ID/PWを入力中...")
+        user_input.clear()
+        user_input.send_keys(JKK_ID)
+        pass_input.clear()
+        pass_input.send_keys(JKK_PASSWORD)
         
-        log("⏳ 検索結果の表示を待っています...")
-        time.sleep(15)
+        # 4. ログイン実行
+        log("🚀 ログインボタンをクリックします")
+        driver.execute_script("submitNext();")
         
-        # 最終確認用のスクリーンショット
-        driver.save_screenshot("search_result.png")
-        log("✨ 検索完了！『search_result.png』を確認してください。")
+        # --- ここから遷移確認 ---
+        driver.switch_to.default_content()
+        time.sleep(10)
+        driver.save_screenshot("login_attempt_result.png")
+        log("📸 実行結果を『login_attempt_result.png』に保存しました。")
+        
+        # もし画面に「条件から検索」があれば、そこが本当の第一ゴールです
+        # (この後の処理は一旦止めて、まずはログインが成功するか確認しましょう)
 
     except Exception as e:
-        log(f"⚠️ エラー: {e}")
-        driver.save_screenshot("error_debug.png")
+        log(f"⚠️ エラー発生: {e}")
+        driver.save_screenshot("fatal_error_final.png")
     finally:
         driver.quit()
 
 if __name__ == "__main__":
-    from selenium.webdriver.support.ui import WebDriverWait
     main()
