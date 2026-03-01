@@ -24,54 +24,36 @@ def main():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
     try:
-        # 手順1: トップページ
+        # 手順1: トップページ（Refererの偽装元となるベースキャンプ）
         log("🚪 手順1: 公式サイト(www)へアクセス")
         driver.get("https://www.to-kousya.or.jp/")
         time.sleep(5)
 
-        # 手順2: メニューをこじ開ける
-        log("🖱️ 手順2: 『住宅をお探しの方』メニューを展開します")
-        # メニュー自体をクリックしてJSでサブメニューを表示させる
-        menu_script = """
-            let menu = document.evaluate("//span[contains(text(), '住宅をお探しの方')]/..", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if(menu) menu.click();
+        # 手順2: 直通ドアを生成して強行突破
+        # UIに依存せず、ページ内に見えないリンクを作ってクリックさせる（これで正規遷移の証拠が残る）
+        log("🌉 手順2: ページ内に直通リンクを自動生成して遷移します")
+        bridge_script = """
+            let a = document.createElement('a');
+            a.href = 'https://jhomes.to-kousya.or.jp/search/jkknet/pc/';
+            document.body.appendChild(a);
+            a.click();
         """
-        driver.execute_script(menu_script)
-        time.sleep(2)
+        driver.execute_script(bridge_script)
+        time.sleep(8)
 
-        # 手順3: 展開された中からJKKねっとへのリンクを叩く
-        log("🔍 手順3: 展開されたメニューから『JKKねっと』を特定")
-        # 待ち時間に頼らず、JSで要素を直接叩き起こす
-        jkk_click_script = """
-            let links = Array.from(document.querySelectorAll('a'));
-            let target = links.find(a => a.href.includes('jkknet') || a.innerText.includes('JKKねっと'));
-            if(target) {
-                target.click();
-                return true;
-            }
-            return false;
-        """
-        found = driver.execute_script(jkk_click_script)
-        
-        if not found:
-            log("🚨 メニュー展開後のリンク特定に失敗。スクショを撮ります。")
-            driver.save_screenshot("menu_fail.png")
-            return
-
-        # 手順4: ログインボタンの実行（正規ルート経由なのでおわびは出ないはず）
-        time.sleep(5)
-        log("🔑 手順4: ログイン画面を呼び出し")
-        driver.execute_script("mypageLogin();")
+        # 手順3: ログイン画面呼び出し
+        log("🔑 手順3: ログイン画面を呼び出し")
+        driver.execute_script("try { mypageLogin(); } catch(e) { console.log('error'); }")
         time.sleep(5)
 
         # 別窓対応
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
-        # 手順5: ID/PW入力（JSで瞬時に実行）
-        log("⌨️ 手順5: ログイン情報を投入")
-        u = os.environ.get("JKK_ID")
-        p = os.environ.get("JKK_PASSWORD")
+        # 手順4: ID/PW入力
+        log("⌨️ 手順4: ログイン情報を投入")
+        u = os.environ.get("JKK_ID", "")
+        p = os.environ.get("JKK_PASSWORD", "")
         
         fill_script = f"""
             function fill(doc) {{
@@ -97,9 +79,9 @@ def main():
         log(f"📍 最終URL: {driver.current_url}")
         
         if "mypageMenu" in driver.current_url:
-            log("🎉 成功！正規の階段を登りきりました。")
+            log("🎉 成功！直通ドア戦略で突破しました。")
             if os.environ.get("DISCORD_WEBHOOK_URL"):
-                requests.post(os.environ["DISCORD_WEBHOOK_URL"], json={"content": "✅ **JKKログイン成功！**"})
+                requests.post(os.environ["DISCORD_WEBHOOK_URL"], json={"content": "✅ **JKKログイン成功！** くじらを完全回避しました。"})
         else:
             log(f"💀 失敗。タイトル: {driver.title}")
             driver.save_screenshot("last_resort.png")
